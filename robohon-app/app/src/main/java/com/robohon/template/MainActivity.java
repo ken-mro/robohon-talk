@@ -473,7 +473,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             boolean isUser = ConversationStore.ROLE_USER.equals(role);
             int bubbleBg = isUser ? 0xFF1E88E5 : 0xFFECEFF1;   // 青 / 淡灰
             int textColor = isUser ? 0xFFFFFFFF : 0xFF1A1A1A;  // 白 / 濃色
-            String speaker = isUser ? (mOwnerName != null ? mOwnerName : "あなた") : mRobotName;
+            String speaker = isUser ? "あなた" : mRobotName;
 
             LinearLayout row = new LinearLayout(this);
             row.setOrientation(LinearLayout.VERTICAL);

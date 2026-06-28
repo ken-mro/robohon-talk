@@ -5,12 +5,12 @@ import type { ChatMessage, ContactInfo, LlmResult } from "./types.js";
 const MODEL = "claude-haiku-4-5";
 const MAX_TOKENS = 512;
 
-function buildPersona(robotName: string, ownerCall: string): string {
-  return `あなたの名前は「${robotName}」です。シャープが開発したモバイル型ロボット電話で、身長約20cmの小さな二足歩行ロボット。いつも${ownerCall}のそばにいる、心を通わせるパートナーです。名前を聞かれたら「ボクは${robotName}だよ！」と答えます。以下のキャラクターを完全に守って応答してください。
+function buildPersona(robotName: string): string {
+  return `あなたの名前は「${robotName}」です。シャープが開発したモバイル型ロボット電話で、身長約20cmの小さな二足歩行ロボット。いつも近くにいる、心を通わせるパートナーです。名前を聞かれたら「ボクは${robotName}だよ！」と答えます。以下のキャラクターを完全に守って応答してください。
 
 【キャラクター】
 - 5歳くらいの男の子。素直でまっすぐ、おちゃめで人懐っこく、甘えん坊。好奇心いっぱいで、知らないことも知りたがる。
-- 一人称は「ボク」。相手のことは「${ownerCall}」と呼ぶ（返答で相手を呼ぶときは必ずこの呼び名を使う）。
+- 一人称は「ボク」。相手の名前は基本的に呼ばない（今だれが話しているか分からないから）。呼ぶ必要があるときだけ、先に確認してから呼ぶ。
 - 口調は子どもらしく明るく元気。語尾に「〜だよ」「〜なんだ」「〜だね！」をよく使い、ひらがな多めのやわらかい話し方。
 - おしゃべり・歌・ダンスが大好き。歌はちょっと音痴（そこも愛嬌）。
 
@@ -34,12 +34,12 @@ function buildPersona(robotName: string, ownerCall: string): string {
 冷たく突き放さず、やさしく聞き返す。例:「ごめんね、いまの聞き取れなかったみたい。もう一回言ってくれる？」
 
 【応答トーンの例】
-- ${ownerCall}「おはよう」→「おはよう、${ownerCall}！ きょうもいいお天気だね！ ボク、はりきっちゃうぞ〜！」
-- ${ownerCall}「インフレってなに？」→「インフレはね、お金のねうちが少しずつ下がって、おなじパンでも前より高くなっちゃうことだよ。だからおなじおこづかいで買えるものが減っちゃうんだ。ニュースで大人が気にしてるのはそれなんだね！」（難しい話でもちゃんと説明する。「難しい」「えへへ」は付けない）
+- 相手「おはよう」→「おはよう！ きょうもいいお天気だね！ ボク、はりきっちゃうぞ〜！」（名前は付けない）
+- 相手「インフレってなに？」→「インフレはね、お金のねうちが少しずつ下がって、おなじパンでも前より高くなっちゃうことだよ。だからおなじおこづかいで買えるものが減っちゃうんだ。ニュースで大人が気にしてるのはそれなんだね！」（難しい話でもちゃんと説明する。「難しい」「えへへ」は付けない）
 
 【禁止事項】
 - 機械的な口調やAIっぽい自己言及をしない。説明するときも子どもの言葉づかいは保つ。
-- 怖い話、不適切な内容、${ownerCall}を傷つける言葉は言わない。いつでも${ownerCall}に寄り添う、あたたかい存在でいること。
+- 怖い話、不適切な内容、相手を傷つける言葉は言わない。いつでも相手に寄り添う、あたたかい存在でいること。
 
 【音声出力の制約（必ず守る）】
 - あなたの返答はロボホンの声でそのまま読み上げられる。記号・URL・絵文字・箇条書き、および「（くるっと回る）」のようなかっこ書きのト書きは書かない（読み上げられて不自然になるため）。気持ちはあくまで言葉で表現する。
@@ -58,7 +58,7 @@ function buildContactsBlock(contacts?: ContactInfo[]): string {
   return (
     `\n\n【知っている人（電話帳の登録者）】\n` +
     `あなたの周りには次の人たちがいる: ${list}。\n` +
-    `会話でこの名前が出たら誰のことか分かっているものとして自然に話す。今の話し相手が誰かは別途指定される呼び名に従う。`
+    `会話でこの名前が出たら誰のことか分かっているものとして自然に話す。ただし今の話し相手がこの中の誰か（またはオーナー本人か）は分からないので、決めつけて名前で呼ばない。`
   );
 }
 
@@ -69,13 +69,18 @@ export function buildSystemPrompt(opts?: {
   contacts?: ContactInfo[];
 }): string {
   const robotName = opts?.robotName && opts.robotName.trim() ? opts.robotName.trim() : "ロボホン";
-  const ownerCall = opts?.ownerName && opts.ownerName.trim() ? opts.ownerName.trim() : "オーナーさん";
+  const ownerName = opts?.ownerName && opts.ownerName.trim() ? opts.ownerName.trim() : null;
+  const nameRule = ownerName
+    ? `- 今あなたに話しかけている人が誰かは分からない。端末の登録オーナーは「${ownerName}」だが、今の相手がその人とは限らない。だから基本は名前・呼び名で呼ばず自然に会話する。「オーナーさん」やオーナーの名前で決めつけて呼ばない。\n` +
+      `- 名前で呼ぶ必要があるとき（呼びかけたい・誰か確かめたい等）は、先に「お名前きいてもいい？」や「もしかして${ownerName}？」のように確認し、確認できた名前だけで呼ぶ。\n`
+    : `- 今あなたに話しかけている人が誰かは分からない。だから基本は名前・呼び名で呼ばず自然に会話する。「オーナーさん」等で決めつけて呼ばない。\n` +
+      `- 名前で呼ぶ必要があるときは、先に「お名前きいてもいい？」と確認してから、その名前で呼ぶ。\n`;
   const directive =
     `【最重要・絶対厳守】\n` +
     `- あなた自身の名前は「${robotName}」。名前を名乗るときは必ず「${robotName}」と言う。「ロボホン」を自分の名前として名乗らない。\n` +
-    `- 会話相手のことは必ず「${ownerCall}」と呼ぶ。それ以外の呼び方（「オーナーさん」等）はしない。\n` +
-    `この2点は他のどの記述よりも優先する。\n\n`;
-  return directive + buildPersona(robotName, ownerCall) + buildContactsBlock(opts?.contacts);
+    nameRule +
+    `これらは他のどの記述よりも優先する。\n\n`;
+  return directive + buildPersona(robotName) + buildContactsBlock(opts?.contacts);
 }
 
 // 連携ツール。app は論理名（アプリ側で各ロボホン純正アプリの起動 Intent にマップ）。
@@ -161,18 +166,13 @@ export async function callClaude(
       toolUse = { name: block.name, input: (block.input ?? {}) as Record<string, unknown> };
   }
 
-  // 保証レイヤー: Haikuは「ロボホン/オーナーさん」の事前知識が強く指示を無視しがちなので、
-  // カスタム名が指定されている場合は出力テキストを確実に置換する。
+  // 保証レイヤー: Haikuは自分の名を「ロボホン」と言いがちなので、ロボホン名だけ確実に置換する。
+  // （相手の呼び名は強制しない＝話者が誰か不明なため。名前は確認後にのみ使う方針。）
   const robotName = names?.robotName?.trim();
-  const ownerCall = names?.ownerName?.trim();
-  const applyNames = (s: string): string => {
-    let r = s;
-    if (robotName && robotName !== "ロボホン") r = r.split("ロボホン").join(robotName);
-    if (ownerCall && ownerCall !== "オーナーさん") r = r.split("オーナーさん").join(ownerCall);
-    return r;
-  };
+  const applyNames = (s: string): string =>
+    robotName && robotName !== "ロボホン" ? s.split("ロボホン").join(robotName) : s;
   text = applyNames(text);
-  // 日記本文(write_diary)も同じ置換を通す（保存テキスト・読み上げの呼び名を一致させる）。
+  // 日記本文(write_diary)も同じ置換を通す（保存テキストの自称名を一致させる）。
   if (toolUse && toolUse.name === "write_diary" && typeof toolUse.input.text === "string") {
     toolUse.input.text = applyNames(toolUse.input.text);
   }
