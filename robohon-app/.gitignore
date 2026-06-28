@@ -1,0 +1,9 @@
+.gradle/
+.idea/
+.DS_Store
+/build
+/captures
+/app/build/
+local.properties
+*.iml
+# gradle.properties IS tracked for this project (build settings).

@@ -1,0 +1,5 @@
+<resources>
+    <string name="app_name">トーク</string>
+    <string name="hello">Hello RoBoHoN!!</string>
+    <string name="conversation_empty">まだ会話がありません。話しかけてみてね。</string>
+</resources>

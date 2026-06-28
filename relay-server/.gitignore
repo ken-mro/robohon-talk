@@ -1,0 +1,8 @@
+node_modules/
+dist/
+.env
+*.log
+# Cloudflare Wrangler のローカル状態・ローカルシークレット
+.wrangler/
+.dev.vars
+.dev.vars.*

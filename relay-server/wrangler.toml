@@ -1,0 +1,15 @@
+# Cloudflare Workers 設定（素の fetch ハンドラ: src/worker.ts）。
+# デプロイ:
+#   npx wrangler login
+#   npx wrangler secret put ANTHROPIC_API_KEY   # キーはコードに置かない
+#   npx wrangler deploy
+# 払い出される https://robohon-talk.<subdomain>.workers.dev/chat をアプリの RELAY_URL に設定。
+name = "robohon-talk"
+main = "src/worker.ts"
+# Anthropic SDK が必要とする Node 互換(process 等)のため nodejs_compat を有効化。
+compatibility_date = "2025-11-01"
+compatibility_flags = ["nodejs_compat"]
+
+# 任意: モック動作で試すとき（キー不要）。本番では設定しない。
+# [vars]
+# MOCK = "1"

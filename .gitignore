@@ -1,0 +1,40 @@
+# --- Sharp RoBoHoN SDK / 配布物（ローカルのみ・再配布禁止） ---
+# 公式SDKの展開物と、取得したドキュメント原本(PDF/HTML)はコミットしない。
+# 派生した references/*.md（ナレッジベース本体）はコミット対象。
+vendor/
+.claude/skills/robohon-sdk/references/source/
+# SDK本体zip・USBドライバ（シャープ配布物）。
+RoBoHoN_SDK_2_0_0.zip
+usb_driver_SHARP_RoBoHoN_r4.1/
+usb_driver_SHARP_RoBoHoN_r4.1.zip
+# アプリのコンパイル用フレームワークjar（シャープSDK同梱・再配布禁止）。
+# クローン後は SDK から jar/ へコピーすること（robohon-app/app/jar/README.md 参照）。
+robohon-app/app/jar/*.jar
+
+# --- 機密 ---
+# Claude APIキー等。中継サーバの設定は実体をコミットしない。
+.env
+.env.*
+**/local.properties
+*.keystore
+*.jks
+secrets*.json
+
+# --- Android / Gradle ---
+*.iml
+.gradle/
+**/build/
+.idea/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+
+# --- Node (中継サーバ) ---
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# --- OS ---
+Thumbs.db
+.DS_Store

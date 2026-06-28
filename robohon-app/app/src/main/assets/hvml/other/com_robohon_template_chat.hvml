@@ -1,0 +1,51 @@
+<?xml version="1.0" ?>
+<hvml version="2.0">
+    <head>
+        <producer>com.robohon.template</producer>
+        <description>LLM会話シナリオ（あいさつ→待受→認識テキストをアプリへ→応答発話）</description>
+        <scene value="com.robohon.template.scene_common"/>
+        <version value="1.0"/>
+        <!-- アプリからstartSpeechで起動するaccost群 -->
+        <accost priority="75" topic_id="greet"  word="com.robohon.template.chat.greet"/>
+        <accost priority="75" topic_id="say"    word="com.robohon.template.chat.say"/>
+        <accost priority="75" topic_id="listen" word="com.robohon.template.chat.listen"/>
+    </head>
+    <body>
+        <!-- 起動時あいさつ → そのまま待受へ。
+             文言はアプリが ${pkg:speech} 解決で動的に渡す（例「はーい、ろぼこんだよー。なになにー？」）-->
+        <topic id="greet" listen="false">
+            <action index="1">
+                <speech>${com.robohon.template:speech}</speech>
+                <behavior id="assign" type="normal"/>
+            </action>
+            <next href="#listen" type="default"/>
+        </topic>
+
+        <!-- 待受：どのsituationにも一致しない自由発話は default で capture へ落とす -->
+        <topic id="listen" listen="true" listen_ms="15000">
+            <a href="#capture" type="default"/>
+            <next href="#capture" type="default"/>
+        </topic>
+
+        <!-- 認識テキスト ${Lvcsr:Basic} を control/data でアプリへ渡す（onVoiceUIActionEnd: user_said） -->
+        <topic id="capture" listen="false">
+            <action index="1">
+                <control function="user_said" target="com.robohon.template">
+                    <data key="text" value="${Lvcsr:Basic}"/>
+                </control>
+            </action>
+        </topic>
+
+        <!-- 応答発話：${pkg:speech} をアプリが onVoiceUIResolveVariable で解決。
+             発話後に control(say_done) で完了をアプリへ通知し、次の発話 or 待受へ進める -->
+        <topic id="say" listen="false">
+            <action index="1">
+                <speech>${com.robohon.template:speech}</speech>
+                <behavior id="assign" type="normal"/>
+            </action>
+            <action index="2">
+                <control function="say_done" target="com.robohon.template"/>
+            </action>
+        </topic>
+    </body>
+</hvml>

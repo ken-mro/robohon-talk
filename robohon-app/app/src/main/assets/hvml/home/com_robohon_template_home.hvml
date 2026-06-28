@@ -1,0 +1,29 @@
+<?xml version="1.0" ?>
+<hvml version="2.0">
+    <head>
+        <producer>com.robohon.template</producer>
+        <description>ホーム起動シナリオ</description>
+        <scene value="home"/>
+        <version value="1.0"/>
+        <!-- __ROBO_KANA__ は RegisterScenarioService がロボホンの実名(かな)に置換する。
+             例: 名前が「たろう」→「たろうを起動して」/「オッケーたろう」。既定は「ろぼほん」。-->
+        <situation priority="78" topic_id="start" trigger="user-word">${Local:WORD_APPLICATION} eq __ROBO_KANA__</situation>
+        <situation priority="78" topic_id="start" trigger="user-word">${Local:WORD_APPLICATION_FREEWORD} eq おっけー__ROBO_KANA__</situation>
+    </head>
+    <body>
+        <topic id="start" listen="false">
+            <action index="1">
+                <speech>${resolver:speech_ok(${resolver:ok_id})}</speech>
+                <behavior id="${resolver:motion_ok(${resolver:ok_id})}" type="normal"/>
+            </action>
+            <!-- あいさつはアプリ起動後の greet（名前入り）に集約。ここでは発話せず起動のみ。 -->
+            <action index="2">
+                <behavior id="assign" type="normal"/>
+                <control function="start_activity" target="home">
+                    <data key="package_name" value="com.robohon.template"/>
+                    <data key="class_name" value="com.robohon.template.MainActivity"/>
+                </control>
+            </action>
+        </topic>
+    </body>
+</hvml>

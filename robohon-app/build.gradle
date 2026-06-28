@@ -1,0 +1,5 @@
+// Top-level build file. Plugin versions are declared here (apply false) and
+// applied in module build.gradle files. Modernized for AGP 8 / Gradle 8 / JDK 17.
+plugins {
+    id 'com.android.application' version '8.5.2' apply false
+}

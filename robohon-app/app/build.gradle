@@ -1,0 +1,61 @@
+plugins {
+    id 'com.android.application'
+}
+
+// 中継サーバのURL/トークンは local.properties（gitignored）から読む。
+// 公開リポジトリに実URL・トークンを載せないため。未設定時はローカルLANの既定値。
+def localProps = new Properties()
+def lpFile = rootProject.file("local.properties")
+if (lpFile.exists()) { lpFile.withInputStream { localProps.load(it) } }
+def relayUrl = localProps.getProperty("relay.url", "http://192.168.3.4:8787/chat")
+def relayToken = localProps.getProperty("relay.token", "")
+
+android {
+    // AGP 8 requires namespace here (the old AndroidManifest "package" attr is removed).
+    namespace 'com.robohon.template'
+    compileSdk 34
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    defaultConfig {
+        applicationId "com.robohon.template"
+        // RoBoHoN targets API 21 in principle for compatibility across 1st/2nd-gen devices.
+        minSdk 21
+        targetSdk 21
+        versionCode 10000
+        versionName "1.0.0"
+
+        buildConfigField "String", "RELAY_URL", "\"${relayUrl}\""
+        buildConfigField "String", "RELAY_TOKEN", "\"${relayToken}\""
+    }
+
+    buildTypes {
+        release {
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    // targetSdk 21 trips newer lint checks; don't let them fail the build.
+    lint {
+        abortOnError false
+    }
+}
+
+dependencies {
+    // Sharp's voice-UI framework is provided by the device at runtime → compile-time only,
+    // must NOT be packaged into the APK.
+    compileOnly files('jar/jp.co.sharp.android.voiceui.framework.jar')
+    // 電話帳/オーナー/ロボホンプロフィール（名前取得）。実行時は端末提供。
+    compileOnly files('jar/jp.co.sharp.android.rb.addressbook.framework.jar')
+
+    // 中継サーバ(relay-server)へのHTTP通信
+    implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+}
