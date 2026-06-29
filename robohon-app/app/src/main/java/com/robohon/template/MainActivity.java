@@ -26,11 +26,14 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.io.IOException;
+import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.Deque;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
 
@@ -65,11 +68,16 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
 
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
-    /** 待ち時間フィラー（応答が遅いときだけ段階的に発話。速い応答では発火前に取消）。 */
-    private static final String[] FILLER_TEXTS = {"えーっと", "ふむふむ", "ちょっと調べてみるね"};
-    // 認識完了後の沈黙をすぐ埋める。1つ目は早め(0.7s)、以降は応答が長引いたとき段階的に。
-    // 速い応答(<0.7s)はフィラー発火前に取り消されるので無音のまま即応答する。
-    private static final long[] FILLER_DELAYS = {700, 2500, 4500};
+    /** 待ち時間フィラー（応答が遅いときだけ段階的に発話。速い応答では発火前に取消）。
+     *  「うんうん」→「ちょっと調べてみるね」→「なるほどなるほど」の順。最後の語以降も応答が無ければ
+     *  「なるほどなるほど」を一定間隔で繰り返す。 */
+    private static final String[] FILLER_TEXTS = {"うんうん", "ちょっと調べてみるね", "なるほどなるほど"};
+    /** 最初の「うんうん」までの待ち。速い応答(<この値)は無音で即応答。 */
+    private static final long FILLER_FIRST_DELAY = 700;
+    /** 各フィラー発話後、次のフィラーまでの間隔（FILLER_TEXTS の i 番目の後）。 */
+    private static final long[] FILLER_GAPS = {1800, 2300};
+    /** 最後（なるほどなるほど）以降の繰り返し間隔。 */
+    private static final long FILLER_REPEAT_GAP = 3000;
     /** LLMへ渡す履歴の上限（直近Nメッセージ＝約10往復）。表示・保存は全件で別管理。 */
     private static final int SEED_MESSAGES = 20;
 
@@ -131,6 +139,30 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     /** 起動後の初回リクエストで、保存済み履歴の直近窓をサーバへ渡し文脈を復元する。 */
     private JSONArray mPendingSeed = null;
 
+    /** 表示用の日付セパレータ管理＆日時フォーマッタ（UIスレッドのみで使用）。 */
+    private String mLastRenderedDay = null;
+    private final SimpleDateFormat mTimeFmt = new SimpleDateFormat("HH:mm", Locale.JAPAN);
+    private final SimpleDateFormat mDayKeyFmt = new SimpleDateFormat("yyyyMMdd", Locale.JAPAN);
+    private final SimpleDateFormat mDaySepFmt = new SimpleDateFormat("yyyy年M月d日 (E)", Locale.JAPAN);
+
+    /** 待ち時間フィラーの状態（自己再スケジュールする tick）。 */
+    private int mFillerIndex = 0;
+    private final Runnable mFillerTick = new Runnable() {
+        @Override
+        public void run() {
+            if (!mWaitingForRelay) return;
+            if (mSpeaking) {
+                mHandler.postDelayed(this, 500); // 発話中は少し待って再試行
+                return;
+            }
+            int idx = Math.min(mFillerIndex, FILLER_TEXTS.length - 1);
+            speakFiller(FILLER_TEXTS[idx]);
+            long gap = (mFillerIndex < FILLER_GAPS.length) ? FILLER_GAPS[mFillerIndex] : FILLER_REPEAT_GAP;
+            mFillerIndex++;
+            mHandler.postDelayed(this, gap);
+        }
+    };
+
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
@@ -189,7 +221,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         // あいさつは画面に出すだけで履歴ファイルには保存しない（毎起動の保存で履歴/seedが
         // あいさつだらけになり文脈が埋まるのを防ぐ）。
         mCurrentUtterance = "はーい、" + mRobotName + "だよー。なになにー？";
-        addMessageView(ConversationStore.ROLE_ROBOT, mCurrentUtterance);
+        addMessageView(ConversationStore.ROLE_ROBOT, mCurrentUtterance, System.currentTimeMillis());
         VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_GREET);
     }
 
@@ -412,17 +444,15 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     }
 
     private void scheduleFillers() {
-        for (int i = 0; i < FILLER_TEXTS.length; i++) {
-            final String filler = FILLER_TEXTS[i];
-            mHandler.postDelayed(() -> {
-                if (mWaitingForRelay && !mSpeaking) speakFiller(filler);
-            }, FILLER_DELAYS[i]);
-        }
+        mFillerIndex = 0;
+        mHandler.removeCallbacks(mFillerTick);
+        mHandler.postDelayed(mFillerTick, FILLER_FIRST_DELAY);
     }
 
     private void stopWaiting() {
         mWaitingForRelay = false;
-        if (mHandler != null) mHandler.removeCallbacksAndMessages(null);
+        // フィラーのtickだけ取り消す（say_done等の他のpostは消さない）。
+        if (mHandler != null) mHandler.removeCallbacks(mFillerTick);
     }
 
     /** ロボホン発話をキューに積み、履歴にも記録（保存＋画面）。 */
@@ -462,14 +492,21 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
 
     /** 履歴に1メッセージ追加（端末へ保存＋画面へ反映）。 */
     private void addMessage(String role, String text) {
+        long now = System.currentTimeMillis();
         mStore.append(role, text);
-        addMessageView(role, text);
+        addMessageView(role, text, now);
     }
 
-    /** メッセージの吹き出し（話者ラベル＋角丸バブル）を追加して最下部へスクロール（UIスレッド）。 */
-    private void addMessageView(String role, String text) {
+    /** メッセージの吹き出し（話者ラベル＋時刻＋角丸バブル）を追加して最下部へスクロール（UIスレッド）。 */
+    private void addMessageView(String role, String text, long t) {
         runOnUiThread(() -> {
             if (mMessageContainer == null) return;
+            // 日付が変わったら日付セパレータを挿入（チャットアプリ風）
+            String dayKey = mDayKeyFmt.format(new Date(t));
+            if (!dayKey.equals(mLastRenderedDay)) {
+                addDateSeparator(t);
+                mLastRenderedDay = dayKey;
+            }
             boolean isUser = ConversationStore.ROLE_USER.equals(role);
             int bubbleBg = isUser ? 0xFF1E88E5 : 0xFFECEFF1;   // 青 / 淡灰
             int textColor = isUser ? 0xFFFFFFFF : 0xFF1A1A1A;  // 白 / 濃色
@@ -484,7 +521,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             row.setLayoutParams(rowLp);
 
             TextView label = new TextView(this);
-            label.setText(speaker);
+            label.setText(speaker + "  " + mTimeFmt.format(new Date(t)));
             label.setTextSize(12);
             label.setTextColor(0xFF888888);
             LinearLayout.LayoutParams labelLp = new LinearLayout.LayoutParams(
@@ -518,12 +555,29 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         });
     }
 
+    /** 日付セパレータ（中央寄せの「yyyy年M月d日 (E)」）を追加。UIスレッドから呼ぶ。 */
+    private void addDateSeparator(long t) {
+        TextView sep = new TextView(this);
+        sep.setText(mDaySepFmt.format(new Date(t)));
+        sep.setTextSize(12);
+        sep.setTextColor(0xFF888888);
+        sep.setPadding(dp(8), dp(10), dp(8), dp(6));
+        LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(
+                LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+        lp.gravity = Gravity.CENTER_HORIZONTAL;
+        lp.setMargins(0, dp(6), 0, dp(2));
+        sep.setLayoutParams(lp);
+        mMessageContainer.addView(sep);
+    }
+
     /** 保存済み会話を画面へ復元（直近 RENDER_LIMIT 件のみ。起動時の重さ/OOMを回避）。 */
     private static final int RENDER_LIMIT = 200;
     private void renderHistory() {
         List<ConversationStore.Message> all = mStore.loadAll();
         int from = Math.max(0, all.size() - RENDER_LIMIT);
-        for (int i = from; i < all.size(); i++) addMessageView(all.get(i).role, all.get(i).text);
+        for (int i = from; i < all.size(); i++) {
+            addMessageView(all.get(i).role, all.get(i).text, all.get(i).t);
+        }
         if (mEmptyView != null) mEmptyView.setVisibility(all.isEmpty() ? View.VISIBLE : View.GONE);
     }
 
