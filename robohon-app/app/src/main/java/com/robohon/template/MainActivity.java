@@ -501,7 +501,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     /** 終了コマンド判定。 */
     private static boolean isEndCommand(String text) {
         return text != null
-                && text.matches(".*(終了|しゅうりょう|おしまい|ばいばい|バイバイ|さようなら|またね|とじて|閉じて).*");
+                && text.matches(".*(終了|しゅうりょう|おしまい|ばいばい|バイバイ|さようなら|またね|とじて|閉じて|ありがと).*");
     }
 
     /** 電話帳の登録者を {name, relation} のJSON配列へ。 */
