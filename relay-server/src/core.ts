@@ -76,6 +76,7 @@ export async function handleChat(body: ChatRequest): Promise<ChatResponse> {
           ownerName: body.ownerName,
           robotName: body.robotName,
           contacts: body.contacts,
+          clientTime: body.clientTime,
         });
 
     history.push({ role: "assistant", content: llm.text });

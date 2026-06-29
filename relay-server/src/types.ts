@@ -12,6 +12,8 @@ export type ChatRequest = {
   history?: ChatMessage[];
   /** 電話帳の登録者（家族・友達）。ロボホンが名前で扱えるようにペルソナへ渡す。 */
   contacts?: ContactInfo[];
+  /** 端末のローカル現在日時（整形済み文字列）。時刻/日付/曜日の質問に答えるため。 */
+  clientTime?: string;
 };
 
 /** 電話帳の登録者1人ぶん（呼び名と続柄）。 */

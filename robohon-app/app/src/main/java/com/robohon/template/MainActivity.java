@@ -147,6 +147,8 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private final SimpleDateFormat mTimeFmt = new SimpleDateFormat("M/d HH:mm", Locale.JAPAN);
     private final SimpleDateFormat mDayKeyFmt = new SimpleDateFormat("yyyyMMdd", Locale.JAPAN);
     private final SimpleDateFormat mDaySepFmt = new SimpleDateFormat("yyyy年M月d日 (E)", Locale.JAPAN);
+    /** サーバへ渡す現在日時（時刻/日付/曜日の質問に会話で答えるため）。 */
+    private final SimpleDateFormat mClientTimeFmt = new SimpleDateFormat("yyyy年M月d日(E) HH:mm", Locale.JAPAN);
 
     /** 待ち時間フィラーの状態（自己再スケジュールする tick）。 */
     private int mFillerIndex = 0;
@@ -329,6 +331,8 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             if (mOwnerName != null) req.put("ownerName", mOwnerName);
             JSONArray contacts = buildContactsJson();
             if (contacts.length() > 0) req.put("contacts", contacts);
+            // 端末の現在日時を毎回同梱（時刻/日付/曜日の質問に会話で答えられるように）
+            req.put("clientTime", mClientTimeFmt.format(new Date()));
             // 毎ターン履歴窓を同梱（ステートレス）。サーバはこれを文脈の真実として使う。
             if (mPendingSeed != null && mPendingSeed.length() > 0) {
                 req.put("history", mPendingSeed);

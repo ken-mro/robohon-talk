@@ -67,9 +67,14 @@ export function buildSystemPrompt(opts?: {
   ownerName?: string;
   robotName?: string;
   contacts?: ContactInfo[];
+  clientTime?: string;
 }): string {
   const robotName = opts?.robotName && opts.robotName.trim() ? opts.robotName.trim() : "ロボホン";
   const ownerName = opts?.ownerName && opts.ownerName.trim() ? opts.ownerName.trim() : null;
+  const clientTime = opts?.clientTime && opts.clientTime.trim() ? opts.clientTime.trim() : null;
+  const timeBlock = clientTime
+    ? `\n\n【今の日時】今は ${clientTime}。時刻・日付・曜日を聞かれたら、これを基に自然に答える（「わからない」と言わない）。`
+    : "";
   const nameRule = ownerName
     ? `- 今あなたに話しかけている人が誰かは分からない。端末の登録オーナーは「${ownerName}」だが、今の相手がその人とは限らない。だから基本は名前・呼び名で呼ばず自然に会話する。「オーナーさん」やオーナーの名前で決めつけて呼ばない。\n` +
       `- 名前で呼ぶ必要があるとき（呼びかけたい・誰か確かめたい等）は、先に「お名前きいてもいい？」や「もしかして${ownerName}？」のように確認し、確認できた名前だけで呼ぶ。\n`
@@ -80,7 +85,7 @@ export function buildSystemPrompt(opts?: {
     `- あなた自身の名前は「${robotName}」。名前を名乗るときは必ず「${robotName}」と言う。「ロボホン」を自分の名前として名乗らない。\n` +
     nameRule +
     `これらは他のどの記述よりも優先する。\n\n`;
-  return directive + buildPersona(robotName) + buildContactsBlock(opts?.contacts);
+  return directive + buildPersona(robotName) + buildContactsBlock(opts?.contacts) + timeBlock;
 }
 
 // 連携ツール。app は論理名（アプリ側で各ロボホン純正アプリの起動 Intent にマップ）。
@@ -164,7 +169,7 @@ function getClient(): Anthropic {
 /** Claude を1回呼び、テキストと（あれば）tool_use を正規化して返す。 */
 export async function callClaude(
   messages: ChatMessage[],
-  names?: { ownerName?: string; robotName?: string; contacts?: ContactInfo[] },
+  names?: { ownerName?: string; robotName?: string; contacts?: ContactInfo[]; clientTime?: string },
 ): Promise<LlmResult> {
   const res = await getClient().messages.create({
     model: MODEL,
