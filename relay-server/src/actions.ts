@@ -15,7 +15,7 @@ export function toAction(toolUse: LlmResult["toolUse"]): Action | null {
   }
   if (toolUse.name === "perform_motion") {
     const kind = String(toolUse.input.kind ?? "").trim();
-    if (kind === "sing" || kind === "dance" || kind === "action") {
+    if (kind === "sing" || kind === "dance" || kind === "action" || kind === "photo") {
       const query = String(toolUse.input.query ?? "").trim();
       return query ? { type: "perform_motion", kind, query } : { type: "perform_motion", kind };
     }

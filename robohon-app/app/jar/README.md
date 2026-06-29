@@ -10,6 +10,7 @@
 - `jp.co.sharp.android.rb.song.framework.jar` （必須：歌）
 - `jp.co.sharp.android.rb.rbdance.framework.jar` （必須：ダンス）
 - `jp.co.sharp.android.rb.action.framework.jar` （必須：アクション=歩く等）
+- `jp.co.sharp.android.rb.cameralibrary.jar` （必須：写真撮影）
 
 これらは実行時には端末が提供するため、ビルドでは `compileOnly`（APK には同梱しない）として参照します。
 SDK は RoBoHoN 開発者サイトから入手できます。

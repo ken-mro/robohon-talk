@@ -10,6 +10,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 import jp.co.sharp.android.rb.action.ActionUtil;
+import jp.co.sharp.android.rb.camera.ShootMediaUtil;
 import jp.co.sharp.android.rb.rbdance.DanceUtil;
 import jp.co.sharp.android.rb.song.SongUtil;
 
@@ -26,6 +27,7 @@ public final class MotionController {
     private static final String RESULT_SONG = PKG + ".action.RESULT_SONG";
     private static final String RESULT_DANCE = PKG + ".action.RESULT_DANCE";
     private static final String RESULT_ACTION = PKG + ".action.RESULT_ACTION";
+    private static final String RESULT_PHOTO = PKG + ".action.RESULT_PHOTO";
 
     public interface Listener {
         /** 動作完了通知。ok=true は正常終了、false は中断/失敗（USB接続中など）。 */
@@ -119,6 +121,14 @@ public final class MotionController {
                 i.putExtra(ActionUtil.EXTRA_REQUEST_ID, id);
                 mApp.sendBroadcast(i);
                 return true;
+            } else if ("photo".equals(kind)) {
+                Intent i = new Intent(ShootMediaUtil.ACTION_SHOOT_IMAGE);
+                i.setPackage(ShootMediaUtil.PACKAGE);
+                i.putExtra(ShootMediaUtil.EXTRA_FACE_DETECTION, false);
+                i.putExtra(ShootMediaUtil.EXTRA_REPLYTO_ACTION, RESULT_PHOTO);
+                i.putExtra(ShootMediaUtil.EXTRA_REPLYTO_PKG, mApp.getPackageName());
+                mApp.sendBroadcast(i);
+                return true;
             }
         } catch (Throwable t) {
             Log.w(TAG, "execute failed kind=" + kind + ": " + t);
@@ -156,6 +166,9 @@ public final class MotionController {
                         } else if (RESULT_ACTION.equals(act)) {
                             ok = intent.getIntExtra(ActionUtil.EXTRA_RESULT_CODE, ActionUtil.RESULT_CANCELED)
                                     == ActionUtil.RESULT_OK;
+                        } else if (RESULT_PHOTO.equals(act)) {
+                            ok = intent.getIntExtra(ShootMediaUtil.EXTRA_RESULT_CODE, ShootMediaUtil.RESULT_CANCELED)
+                                    == ShootMediaUtil.RESULT_OK;
                         }
                     } catch (Throwable t) {
                         Log.w(TAG, "result parse failed: " + t);
@@ -167,6 +180,7 @@ public final class MotionController {
             f.addAction(RESULT_SONG);
             f.addAction(RESULT_DANCE);
             f.addAction(RESULT_ACTION);
+            f.addAction(RESULT_PHOTO);
             mApp.registerReceiver(mReceiver, f);
         } catch (Throwable t) {
             Log.w(TAG, "registerReceiver failed: " + t);

@@ -90,7 +90,6 @@ export function buildSystemPrompt(opts?: {
 
 // 連携ツール。app は論理名（アプリ側で各ロボホン純正アプリの起動 Intent にマップ）。
 export const LAUNCH_APPS = [
-  "camera",
   "album",
   "alarm",
   "timer",
@@ -112,11 +111,11 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: "launch_app",
     description:
-      "ユーザが他アプリ/機能の起動を求めたときに呼ぶ。例: 写真/カメラ→camera、アルバム/写真みせて→album、" +
+      "ユーザが他アプリ/機能の起動を求めたときに呼ぶ。例: アルバム/写真みせて→album、" +
       "アラーム/めざまし→alarm、タイマー→timer、設定→settings、日記をひらく/見せて→diary、" +
       "おはなし/絵本→story、音楽/曲→music、占い/うらない→fortune、英語→english、" +
       "勉強/べんきょう→study、レシピ/料理→recipe、ミニゲーム/ゲーム→minigame、クイズ→quiz、豆知識/トリビア→trivia、思い出/日々→days。" +
-      "（『歌って』『踊って』『歩いて』など体を動かす基本動作は launch_app ではなく perform_motion を使う）",
+      "（『歌って』『踊って』『歩いて』『写真を撮って』など体を動かす/撮影する基本動作は launch_app ではなく perform_motion を使う）",
     input_schema: {
       type: "object",
       properties: {
@@ -130,14 +129,15 @@ export const TOOLS: Anthropic.Tool[] = [
     name: "perform_motion",
     description:
       "ユーザが基本動作を求めたときに呼ぶ。歌って/うたって→kind=sing、踊って/ダンス→kind=dance、" +
-      "歩いて・その他の体の動き（手を振る/おじぎ等）→kind=action。曲名・ダンス名・動作名の指定があれば " +
-      "query にその語を短い見出し語で入れる（例『となりのトトロ』『歩く』『おじぎ』）。指定が無ければ query は省略（おまかせ）。" +
-      "実行はロボホン本体が行い、このアプリは終了せず動作後に会話へ戻る。短い前置き（例『踊るね！』）も返してよい。",
+      "歩いて・その他の体の動き（手を振る/おじぎ等）→kind=action、写真を撮って/撮影して→kind=photo。" +
+      "曲名・ダンス名・動作名の指定があれば query にその語を短い見出し語で入れる（例『となりのトトロ』『歩く』『おじぎ』）。" +
+      "指定が無ければ query は省略（おまかせ）。実行はロボホン本体が行い、このアプリは終了せず動作後に会話へ戻る。" +
+      "短い前置き（例『踊るね！』『写真撮るよ〜』）も返してよい。",
     input_schema: {
       type: "object",
       properties: {
-        kind: { type: "string", enum: ["sing", "dance", "action"] },
-        query: { type: "string", description: "曲名/ダンス名/動作名の見出し語（任意）。" },
+        kind: { type: "string", enum: ["sing", "dance", "action", "photo"] },
+        query: { type: "string", description: "曲名/ダンス名/動作名の見出し語（任意。photoでは不要）。" },
       },
       required: ["kind"],
       additionalProperties: false,

@@ -59,6 +59,8 @@ dependencies {
     compileOnly files('jar/jp.co.sharp.android.rb.song.framework.jar')
     compileOnly files('jar/jp.co.sharp.android.rb.rbdance.framework.jar')
     compileOnly files('jar/jp.co.sharp.android.rb.action.framework.jar')
+    // カメラ（写真撮影＝撮って会話へ戻る）。実行時は端末提供。
+    compileOnly files('jar/jp.co.sharp.android.rb.cameralibrary.jar')
 
     // 中継サーバ(relay-server)へのHTTP通信
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'

@@ -54,6 +54,9 @@
         <uses-library
             android:name="jp.co.sharp.android.rb.action.framework"
             android:required="false" />
+        <uses-library
+            android:name="jp.co.sharp.android.rb.cameralibrary"
+            android:required="false" />
 
     </application>
 
