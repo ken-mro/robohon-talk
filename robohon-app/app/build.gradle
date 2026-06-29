@@ -55,6 +55,10 @@ dependencies {
     compileOnly files('jar/jp.co.sharp.android.voiceui.framework.jar')
     // 電話帳/オーナー/ロボホンプロフィール（名前取得）。実行時は端末提供。
     compileOnly files('jar/jp.co.sharp.android.rb.addressbook.framework.jar')
+    // 基本動作（歌/踊り/アクション）。実行時は端末提供。
+    compileOnly files('jar/jp.co.sharp.android.rb.song.framework.jar')
+    compileOnly files('jar/jp.co.sharp.android.rb.rbdance.framework.jar')
+    compileOnly files('jar/jp.co.sharp.android.rb.action.framework.jar')
 
     // 中継サーバ(relay-server)へのHTTP通信
     implementation 'com.squareup.okhttp3:okhttp:4.12.0'

@@ -17,10 +17,11 @@ export type ChatRequest = {
 /** 電話帳の登録者1人ぶん（呼び名と続柄）。 */
 export type ContactInfo = { name: string; relation?: string };
 
-/** アプリ側が解釈する連携指示。アプリ起動 or 日記書き込み。 */
+/** アプリ側が解釈する連携指示。アプリ起動 / 日記書き込み / 基本動作（歌・踊り・アクション）。 */
 export type Action =
   | { type: "launch_app"; app: string }
-  | { type: "write_diary"; text: string };
+  | { type: "write_diary"; text: string }
+  | { type: "perform_motion"; kind: string; query?: string };
 
 export type ChatResponse = {
   utterances: string[]; // ~150字に分割した発話片（順次発話する）

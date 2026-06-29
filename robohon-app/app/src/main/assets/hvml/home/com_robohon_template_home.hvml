@@ -6,9 +6,9 @@
         <scene value="home"/>
         <version value="1.0"/>
         <!-- __ROBO_KANA__ は RegisterScenarioService がロボホンの実名(かな)に置換する。
-             例: 名前が「たろう」→「たろうを起動して」/「オッケーたろう」。既定は「ろぼほん」。-->
+             例: 名前が「たろう」→「たろう」(名前単体)／「ねえねえたろう」。既定は「ろぼほん」。-->
         <situation priority="78" topic_id="start" trigger="user-word">${Local:WORD_APPLICATION} eq __ROBO_KANA__</situation>
-        <situation priority="78" topic_id="start" trigger="user-word">${Local:WORD_APPLICATION_FREEWORD} eq おっけー__ROBO_KANA__</situation>
+        <situation priority="78" topic_id="start" trigger="user-word">${Local:WORD_APPLICATION_FREEWORD} eq ねえねえ__ROBO_KANA__</situation>
     </head>
     <body>
         <topic id="start" listen="false">

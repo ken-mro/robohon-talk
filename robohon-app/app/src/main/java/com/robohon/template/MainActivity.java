@@ -118,6 +118,8 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private volatile String mCurrentUtterance = "";
     /** 全発話後に実行するアプリ連携（launch_app の app 論理名）。無ければnull。 */
     private String mPendingLaunchApp = null;
+    /** 全発話後に実行する基本動作 [kind, query]。無ければnull。実行中は会話を止めて完了待ち。 */
+    private String[] mPendingMotion = null;
     /** 初回ターンはサーバ履歴をreset。 */
     private boolean mFirstTurn = true;
     /** サーバ応答待ち / 発話中 / 全発話後に終了する、のフラグ。 */
@@ -130,9 +132,10 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     /** 電話帳の登録者（家族・友達）。サーバへ渡してペルソナに反映。 */
     private List<RobohonProfile.Contact> mContacts = new ArrayList<>();
 
-    /** 会話履歴（端末に全件保存）と表示ビュー、日記の保存。 */
+    /** 会話履歴（端末に全件保存）と表示ビュー、日記の保存、基本動作の実行。 */
     private ConversationStore mStore;
     private DiaryStore mDiary;
+    private MotionController mMotion;
     private LinearLayout mMessageContainer;
     private ScrollView mScrollView;
     private TextView mEmptyView;
@@ -141,7 +144,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
 
     /** 表示用の日付セパレータ管理＆日時フォーマッタ（UIスレッドのみで使用）。 */
     private String mLastRenderedDay = null;
-    private final SimpleDateFormat mTimeFmt = new SimpleDateFormat("HH:mm", Locale.JAPAN);
+    private final SimpleDateFormat mTimeFmt = new SimpleDateFormat("M/d HH:mm", Locale.JAPAN);
     private final SimpleDateFormat mDayKeyFmt = new SimpleDateFormat("yyyyMMdd", Locale.JAPAN);
     private final SimpleDateFormat mDaySepFmt = new SimpleDateFormat("yyyy年M月d日 (E)", Locale.JAPAN);
 
@@ -175,6 +178,8 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         // 会話履歴: 端末から読み込んで画面に復元
         mStore = new ConversationStore(this);
         mDiary = new DiaryStore(this);
+        // 基本動作（歌/踊り/アクション）の実行・結果受信。
+        mMotion = new MotionController(this, this::onMotionDone);
         mMessageContainer = (LinearLayout) findViewById(R.id.messageContainer);
         mScrollView = (ScrollView) findViewById(R.id.scrollView);
         mEmptyView = (TextView) findViewById(R.id.emptyView);
@@ -204,6 +209,8 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         mWaitingForRelay = false;
         mSpeaking = false;
         mFinishAfterSpeak = false;
+        mPendingLaunchApp = null;
+        mPendingMotion = null;
         if (mHandler != null) mHandler.removeCallbacksAndMessages(null);
 
         // 名前・電話帳を取得（取得不可なら既定）。中継サーバへ毎リクエスト同梱する。
@@ -217,11 +224,9 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         // 全画面カメラActivityを前面に立ち上げるため、この会話アプリが onPause→finish で即終了してしまい
         // 会話を継続できない。電話帳の登録者把握とオーナー/登録名での呼びかけは有効。
 
-        // 起動あいさつ（名前入り）を ${pkg:speech} で渡し、greet→listen で待受開始。
-        // あいさつは画面に出すだけで履歴ファイルには保存しない（毎起動の保存で履歴/seedが
-        // あいさつだらけになり文脈が埋まるのを防ぐ）。
-        mCurrentUtterance = "はーい、" + mRobotName + "だよー。なになにー？";
-        addMessageView(ConversationStore.ROLE_ROBOT, mCurrentUtterance, System.currentTimeMillis());
+        // 起動あいさつは HVML greet が ${resolver:contacts:robot_name} で設定名のイントネーションで読む。
+        // 画面表示用には名前入りテキストを log に出す（発話とは別経路）。履歴ファイルには保存しない。
+        addMessageView(ConversationStore.ROLE_ROBOT, mRobotName + "だよー。なになにー？", System.currentTimeMillis());
         VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_GREET);
     }
 
@@ -244,6 +249,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         super.onDestroy();
         Log.v(TAG, "onDestroy()");
         this.unregisterReceiver(mHomeEventReceiver);
+        if (mMotion != null) mMotion.release();
         mVUIManager = null;
         mVUIListener = null;
     }
@@ -378,6 +384,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         stopWaiting();
         mUtteranceQueue.clear();
         mPendingLaunchApp = null;
+        mPendingMotion = null;
         boolean done = false;
         try {
             JSONObject obj = new JSONObject(json);
@@ -398,13 +405,17 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                 } else if ("write_diary".equals(type)) {
                     // 会話から生成した日記を端末に保存（読み上げは utterances 側で実施）
                     mDiary.append(action.optString("text", ""));
+                } else if ("perform_motion".equals(type)) {
+                    String kind = action.optString("kind", "");
+                    String query = action.optString("query", "");
+                    if (!kind.isEmpty()) mPendingMotion = new String[]{kind, query};
                 }
             }
         } catch (Exception e) {
             Log.e(TAG, "parse response error: " + json, e);
             enqueueRobot("ごめんね、うまく聞き取れなかったみたい。");
         }
-        if (mUtteranceQueue.isEmpty() && mPendingLaunchApp != null) {
+        if (mUtteranceQueue.isEmpty() && (mPendingLaunchApp != null || mPendingMotion != null)) {
             enqueueRobot("わかった、やってみるね！");
         }
         if (done) mFinishAfterSpeak = true;
@@ -429,11 +440,30 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             launchApp(app);
             return;
         }
+        if (mPendingMotion != null) {          // 基本動作（歌/踊り/アクション）。終了せず完了待ち。
+            String[] m = mPendingMotion;
+            mPendingMotion = null;
+            boolean started = mMotion != null && mMotion.execute(m[0], m.length > 1 ? m[1] : null);
+            if (started) return;               // 完了は onMotionDone で会話へ復帰
+            enqueueRobotExclusive("ごめんね、それはできないみたい。");
+            speakNextOrFinish();
+            return;
+        }
         if (mFinishAfterSpeak) {               // 終了コマンド / done
             finish();
             return;
         }
         VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_LISTEN);
+    }
+
+    /** 基本動作の完了通知（MotionController から、UIスレッド）。会話へ復帰する。 */
+    private void onMotionDone(boolean ok) {
+        if (ok) {
+            VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_LISTEN);
+        } else {
+            enqueueRobotExclusive("ごめんね、今はできなかったみたい。");
+            speakNextOrFinish();
+        }
     }
 
     /** 待ち時間フィラーを1つ発話（履歴には残さない）。 */

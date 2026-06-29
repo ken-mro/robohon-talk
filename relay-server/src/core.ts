@@ -91,9 +91,15 @@ export async function handleChat(body: ChatRequest): Promise<ChatResponse> {
       utterances = action.type === "write_diary" ? ["日記、書いたよ！"] : ["わかった、やってみるね！"];
     }
 
+    const actionDetail = !action
+      ? "none"
+      : action.type === "launch_app"
+        ? `launch_app:${action.app}`
+        : action.type === "perform_motion"
+          ? `perform_motion:${action.kind}${action.query ? "/" + action.query : ""}`
+          : "write_diary";
     console.log(
-      `[chat] session=${body.sessionId} in="${body.text}" -> utt=${utterances.length}` +
-        ` action=${action ? action.type + ":" + (action.type === "launch_app" ? action.app : "diary") : "none"}`,
+      `[chat] session=${body.sessionId} in="${body.text}" -> utt=${utterances.length} action=${actionDetail}`,
     );
     return { utterances, action, done: isDone(llm.text) };
   } catch (err) {

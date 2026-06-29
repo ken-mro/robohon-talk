@@ -4,6 +4,7 @@
     <uses-permission android:name="jp.co.sharp.android.permission.VOICEUI" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="jp.co.sharp.android.rb.addressbook.permission.ACCESS_CONTACT" />
+    <uses-permission android:name="jp.co.sharp.android.rb.action.permission.REQUEST_ACTION" />
 
     <application
         android:allowBackup="false"
@@ -43,6 +44,15 @@
             android:required="true" />
         <uses-library
             android:name="jp.co.sharp.android.rb.addressbook.framework"
+            android:required="false" />
+        <uses-library
+            android:name="jp.co.sharp.android.rb.song.framework"
+            android:required="false" />
+        <uses-library
+            android:name="jp.co.sharp.android.rb.rbdance.framework"
+            android:required="false" />
+        <uses-library
+            android:name="jp.co.sharp.android.rb.action.framework"
             android:required="false" />
 
     </application>

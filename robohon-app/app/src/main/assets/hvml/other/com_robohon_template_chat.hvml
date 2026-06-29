@@ -12,10 +12,10 @@
     </head>
     <body>
         <!-- 起動時あいさつ → そのまま待受へ。
-             文言はアプリが ${pkg:speech} 解決で動的に渡す（例「はーい、ろぼこんだよー。なになにー？」）-->
+             名前は ${resolver:contacts:robot_name}（端末設定のロボホン名）で発話＝設定のイントネーション。 -->
         <topic id="greet" listen="false">
             <action index="1">
-                <speech>${com.robohon.template:speech}</speech>
+                <speech>${resolver:contacts:robot_name}だよー。なになにー？</speech>
                 <behavior id="assign" type="normal"/>
             </action>
             <next href="#listen" type="default"/>

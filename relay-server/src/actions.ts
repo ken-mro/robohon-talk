@@ -13,6 +13,13 @@ export function toAction(toolUse: LlmResult["toolUse"]): Action | null {
     const text = String(toolUse.input.text ?? "").trim();
     if (text) return { type: "write_diary", text };
   }
+  if (toolUse.name === "perform_motion") {
+    const kind = String(toolUse.input.kind ?? "").trim();
+    if (kind === "sing" || kind === "dance" || kind === "action") {
+      const query = String(toolUse.input.query ?? "").trim();
+      return query ? { type: "perform_motion", kind, query } : { type: "perform_motion", kind };
+    }
+  }
   return null;
 }
 
