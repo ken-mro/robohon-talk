@@ -90,6 +90,7 @@ export function buildSystemPrompt(opts?: {
 
 // 連携ツール。app は論理名（アプリ側で各ロボホン純正アプリの起動 Intent にマップ）。
 export const LAUNCH_APPS = [
+  "camera",
   "album",
   "alarm",
   "timer",
@@ -111,11 +112,11 @@ export const TOOLS: Anthropic.Tool[] = [
   {
     name: "launch_app",
     description:
-      "ユーザが他アプリ/機能の起動を求めたときに呼ぶ。例: アルバム/写真みせて→album、" +
+      "ユーザが他アプリ/機能の起動を求めたときに呼ぶ。例: カメラ(アプリを開く)→camera、アルバム/写真みせて→album、" +
       "アラーム/めざまし→alarm、タイマー→timer、設定→settings、日記をひらく/見せて→diary、" +
       "おはなし/絵本→story、音楽/曲→music、占い/うらない→fortune、英語→english、" +
       "勉強/べんきょう→study、レシピ/料理→recipe、ミニゲーム/ゲーム→minigame、クイズ→quiz、豆知識/トリビア→trivia、思い出/日々→days。" +
-      "（『歌って』『踊って』『歩いて』『写真を撮って』など体を動かす/撮影する基本動作は launch_app ではなく perform_motion を使う）",
+      "（ただし『写真を撮って/撮影して』のように“撮る”依頼や、『歌って』『踊って』『歩いて』など体を動かす依頼は launch_app ではなく perform_motion を使う）",
     input_schema: {
       type: "object",
       properties: {
