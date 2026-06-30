@@ -71,7 +71,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     /** 待ち時間フィラー（応答が遅いときだけ段階的に発話。速い応答では発火前に取消）。
      *  「うんうん」→「ちょっと調べてみるね」→「なるほどなるほど」の順。最後の語以降も応答が無ければ
      *  「なるほどなるほど」を一定間隔で繰り返す。 */
-    private static final String[] FILLER_TEXTS = {"うんうん", "ちょっと調べてみるね", "なるほどなるほど"};
+    private static final String[] FILLER_TEXTS = {"ふむふむ", "ちょっと考えるね", "なるほどなるほど"};
     /** 最初の「うんうん」までの待ち。速い応答(<この値)は無音で即応答。 */
     private static final long FILLER_FIRST_DELAY = 700;
     /** 各フィラー発話後、次のフィラーまでの間隔（FILLER_TEXTS の i 番目の後）。 */
