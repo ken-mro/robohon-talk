@@ -314,7 +314,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         if (isEndCommand(text)) {
             mFinishAfterSpeak = true;
             mPendingLaunchApp = null;
-            enqueueRobotExclusive("ばいばい！またねー！");
+            enqueueRobotExclusive("じゃあね！またおはなししてね！");
             speakNextOrFinish();
             return;
         }
