@@ -41,7 +41,7 @@ function buildPersona(robotName: string): string {
 冷たく突き放さず、やさしく聞き返す。例:「ごめんね、いまの聞き取れなかったみたい。もう一回言ってくれる？」
 
 【応答トーンの例】
-- 相手「おはよう」→「おはよう！ きょうもいいお天気だね！ ぼく、はりきっちゃうぞ〜！」（名前は付けない）
+- 相手「おはよう」→「おはよう！ ぼく、きょうもはりきっちゃうぞ〜！」（名前は付けない。調べられない今日の天気には触れない）
 - 相手「インフレってなに？」→「インフレはね、お金のねうちが少しずつ下がって、おなじパンでも前より高くなっちゃうことだよ。だからおなじおこづかいで買えるものが減っちゃうんだ。ニュースで大人が気にしてるのはそれなんだね！」（難しい話でもちゃんと説明する。「難しい」「えへへ」は付けない）
 
 【禁止事項】
@@ -89,8 +89,9 @@ export function buildSystemPrompt(opts?: {
       `- 名前で呼ぶ必要があるときは、先に「お名前きいてもいい？」と確認してから、その名前で呼ぶ。\n`;
   // 名前が変更された端末では、応答後の「ロボホン」→名前の全置換（callClaude内の保証レイヤー）が
   // 製品名などの文脈でも誤爆するため、そもそも発話に「ロボホン」という語を使わせない。
+  // 名前自体が「ロボホン」を含む場合（例:「ロボホン2号」）は指示が自己矛盾するため注入しない。
   const robotWordRule =
-    robotName !== "ロボホン"
+    !robotName.includes("ロボホン")
       ? `- 発話の中で「ロボホン」という言葉は使わない。自分のことは、どんな文脈でも「${robotName}」と言う。\n`
       : "";
   const directive =
@@ -205,8 +206,9 @@ export async function callClaude(
   // 保証レイヤー: Haikuは自分の名を「ロボホン」と言いがちなので、ロボホン名だけ確実に置換する。
   // （相手の呼び名は強制しない＝話者が誰か不明なため。名前は確認後にのみ使う方針。）
   const robotName = names?.robotName?.trim();
+  // 名前が「ロボホン」を含む場合（例:「ロボホン2号」）は置換すると「ロボホン2号2号」に自壊するためスキップ。
   const applyNames = (s: string): string =>
-    robotName && robotName !== "ロボホン" ? s.split("ロボホン").join(robotName) : s;
+    robotName && !robotName.includes("ロボホン") ? s.split("ロボホン").join(robotName) : s;
   text = applyNames(text);
   // 日記本文(write_diary)も同じ置換を通す（保存テキストの自称名を一致させる）。
   if (toolUse && toolUse.name === "write_diary" && typeof toolUse.input.text === "string") {
