@@ -334,6 +334,20 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                 }
                 break;
             }
+            case VoiceUIListenerImpl.ACTION_CANCELLED:
+            case VoiceUIListenerImpl.ACTION_REJECTED: {
+                // 割込み・棄却では say_done が来ない。発話中フラグを畳んで状態機械を再駆動する
+                //（放置すると mSpeaking=true のまま同意フロー・会話が止まったままになる）。
+                mHandler.post(() -> {
+                    if (isFinishing()) return;
+                    Log.w(TAG, "speech cancelled/rejected: event=" + event);
+                    if (mSpeaking) {
+                        mSpeaking = false;
+                        speakNextOrFinish();
+                    }
+                });
+                break;
+            }
             default:
                 break;
         }
@@ -476,8 +490,16 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         String next = mUtteranceQueue.poll();
         if (next != null) {
             mCurrentUtterance = next;
+            int r = VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_SAY);
+            if (r == VoiceUIManager.VOICEUI_ERROR) {
+                // 発話を開始できない（マナーモード・接続不良等）。発話中扱いにすると
+                // say_done 待ちで固まるため、この発話は捨てて次へ進む。
+                Log.w(TAG, "startSpeech(say) failed, drop utterance");
+                mSpeaking = false;
+                speakNextOrFinish();
+                return;
+            }
             mSpeaking = true;
-            VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_SAY);
             return;
         }
         // キューが空
@@ -502,7 +524,10 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             finish();
             return;
         }
-        VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_LISTEN);
+        if (VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_LISTEN)
+                == VoiceUIManager.VOICEUI_ERROR) {
+            Log.w(TAG, "startSpeech(listen) failed");
+        }
     }
 
     /** 基本動作の完了通知（MotionController から、UIスレッド）。会話へ復帰する。 */
@@ -515,11 +540,11 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         }
     }
 
-    /** 待ち時間フィラーを1つ発話（履歴には残さない）。 */
+    /** 待ち時間フィラーを1つ発話（履歴には残さない）。発話開始に失敗したら黙ってスキップ。 */
     private void speakFiller(String text) {
         mCurrentUtterance = text;
-        mSpeaking = true;
-        VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_SAY);
+        mSpeaking = VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_SAY)
+                != VoiceUIManager.VOICEUI_ERROR;
     }
 
     private void scheduleFillers() {
