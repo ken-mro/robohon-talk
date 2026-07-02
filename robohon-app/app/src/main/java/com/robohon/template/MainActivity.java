@@ -31,6 +31,7 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.Deque;
 import java.util.HashMap;
@@ -133,6 +134,10 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private String mOwnerName = null;
     /** 電話帳の登録者（家族・友達）。サーバへ渡してペルソナに反映。 */
     private List<RobohonProfile.Contact> mContacts = new ArrayList<>();
+    /** 電話帳から読んだ生の名前（同意に関わらず端末内で保持）。送信可否は applyConsentToProfile で
+     *  mOwnerName/mContacts へ反映し、不許可時は履歴のマスキング（maskContactNames）にも使う。 */
+    private String mRawOwnerName = null;
+    private List<RobohonProfile.Contact> mRawContacts = new ArrayList<>();
 
     /** 外部送信（電話帳の名前）の同意状態。初回起動時は選択が終わるまで待受を開始しない。 */
     private ConsentStore mConsent;
@@ -243,8 +248,8 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         // 名前・電話帳を取得（取得不可なら既定）。中継サーバへ毎リクエスト同梱する。
         // ただし電話帳の名前（オーナー・登録者）はユーザーが送信を許可した場合のみ同梱する。
         mRobotName = RobohonProfile.getRobotName(this);
-        mOwnerName = RobohonProfile.getOwnerName(this);
-        mContacts = RobohonProfile.getAllContacts(this);
+        mRawOwnerName = RobohonProfile.getOwnerName(this);
+        mRawContacts = RobohonProfile.getAllContacts(this);
         applyConsentToProfile();
         Log.v(TAG, "names: robot=" + mRobotName + " owner=" + mOwnerName + " contacts=" + mContacts.size()
                 + " namesAllowed=" + mConsent.isNamesAllowed());
@@ -392,8 +397,9 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             // 端末の現在日時を毎回同梱（時刻/日付/曜日の質問に会話で答えられるように）
             req.put("clientTime", mClientTimeFmt.format(new Date()));
             // 毎ターン履歴窓を同梱（ステートレス）。サーバはこれを文脈の真実として使う。
+            // 名前送信が不許可のときは、許可中に保存された過去応答に残る名前も含めて伏せ字にする。
             if (mPendingSeed != null && mPendingSeed.length() > 0) {
-                req.put("history", mPendingSeed);
+                req.put("history", mConsent.isNamesAllowed() ? mPendingSeed : maskContactNames(mPendingSeed));
             }
         } catch (Exception e) {
             Log.e(TAG, "json build error", e);
@@ -602,9 +608,6 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     /** 選択結果を保存して送信データへ即反映。初回フローではお礼を言って通常の会話を開始する。 */
     private void onConsentChosen(boolean allowed, boolean firstTime) {
         mConsent.setNamesAllowed(allowed);
-        // 許可へ変えた場合に備えて読み直してから、現在の同意状態を反映する
-        mOwnerName = RobohonProfile.getOwnerName(this);
-        mContacts = RobohonProfile.getAllContacts(this);
         applyConsentToProfile();
         Log.v(TAG, "consent chosen: namesAllowed=" + allowed + " firstTime=" + firstTime);
         if (firstTime && mAwaitingConsent) {
@@ -618,9 +621,44 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
 
     /** 同意状態を送信データへ反映（不許可なら名前情報を落とす）。ロボホン名はペルソナ生成に必要なため送る。 */
     private void applyConsentToProfile() {
-        if (mConsent == null || !mConsent.isNamesAllowed()) {
+        if (mConsent != null && mConsent.isNamesAllowed()) {
+            mOwnerName = mRawOwnerName;
+            mContacts = mRawContacts;
+        } else {
             mOwnerName = null;
             mContacts = new ArrayList<>();
+        }
+    }
+
+    /**
+     * 履歴中の電話帳の名前を伏せ字にする（送信不許可時用）。
+     * 許可中に生成・保存された過去のロボ応答に名前が残っているため、フィールドを落とすだけでは
+     * 履歴経由で名前が外部へ送られ続ける。既知の名前を長い順に置換して防ぐ。
+     * 変換に失敗した場合は履歴を送らない（安全側）。
+     */
+    private JSONArray maskContactNames(JSONArray history) {
+        List<String> names = new ArrayList<>();
+        if (mRawOwnerName != null && !mRawOwnerName.isEmpty()) names.add(mRawOwnerName);
+        for (RobohonProfile.Contact c : mRawContacts) {
+            if (c.name != null && !c.name.isEmpty()) names.add(c.name);
+        }
+        if (names.isEmpty()) return history;
+        Collections.sort(names, (a, b) -> b.length() - a.length()); // 長い名前から（部分一致の崩れ防止）
+        try {
+            JSONArray out = new JSONArray();
+            for (int i = 0; i < history.length(); i++) {
+                JSONObject m = history.getJSONObject(i);
+                String content = m.optString("content", "");
+                for (String n : names) content = content.replace(n, "おともだち");
+                JSONObject copy = new JSONObject();
+                copy.put("role", m.optString("role"));
+                copy.put("content", content);
+                out.put(copy);
+            }
+            return out;
+        } catch (Exception e) {
+            Log.w(TAG, "maskContactNames failed", e);
+            return new JSONArray();
         }
     }
 
