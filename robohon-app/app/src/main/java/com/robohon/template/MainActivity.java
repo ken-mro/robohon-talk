@@ -13,6 +13,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.Button;
 import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
@@ -150,9 +151,11 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                     + "かしこいコンピュータに手伝ってもらってるんだよ。電話帳のみんなのお名前も"
                     + "いっしょに送っていいか、背中の画面で選んでね！";
     private static final String CONSENT_ACK_ALLOWED =
-            "おっけー！じゃあ、みんなのお名前もいっしょにおぼえておくね。それじゃ、おはなししよう！";
+            "おっけー！じゃあ、みんなのお名前もいっしょに送るね。それじゃ、おはなししよう！";
     private static final String CONSENT_ACK_DENIED =
             "わかったー。お名前は送らないでおくね。それじゃ、おはなししよう！";
+    /** 同意フローの発話が進まない場合に強制的に前へ進める保険のタイムアウト。 */
+    private static final long CONSENT_WATCHDOG_MS = 20000;
 
     /** 会話履歴（端末に全件保存）と表示ビュー、日記の保存、基本動作の実行。 */
     private ConversationStore mStore;
@@ -263,9 +266,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         // 案内発話は ACC_SAY 経由（greet と違い待受へ自動遷移しないため、選択前に音声認識が走らない）。
         if (!mConsent.hasChoice()) {
             mAwaitingConsent = true;
-            addMessageView(ConversationStore.ROLE_ROBOT, CONSENT_INTRO_SPEECH, System.currentTimeMillis());
-            enqueueSpeechOnly(CONSENT_INTRO_SPEECH);
-            speakNextOrFinish();
+            speakSystem(CONSENT_INTRO_SPEECH);
             showConsentDialog(true);
             return;
         }
@@ -361,6 +362,11 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     /** 認識テキスト受領 → 中継サーバへ問い合わせ。 */
     private void onUserSaid(String text) {
         Log.v(TAG, "user said: " + text);
+        // 設定ダイアログ表示中の認識結果は使わない（変更前の設定のまま外部送信するのを防ぐ）
+        if (mConsentDialog != null && mConsentDialog.isShowing()) {
+            speakNextOrFinish(); // キューが空なら待受へ戻る
+            return;
+        }
         // 認識失敗（空 or 全角VOICEPFエラー文字列）は聞き返して待受へ
         if (text == null || text.trim().isEmpty() || text.startsWith("ＶＯＩＣＥ")) {
             enqueueRobotExclusive("ごめんね、もう一回言ってくれる？");
@@ -586,23 +592,54 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
 
     /**
      * 外部送信（電話帳の名前）の選択ダイアログを背中の画面に表示。
-     * @param firstTime 初回起動フロー（キャンセル不可＝必ずどちらかを選ぶ）。設定変更時は false。
+     * 背面LCD(240x320)でも選択肢の文言が読み切れるよう、ボタンは縦積みのカスタムビューにする。
+     * @param firstTime 初回起動フロー（キャンセル不可。「使わない＝終了」の選択肢も出す）。設定変更時は false。
      */
     private void showConsentDialog(final boolean firstTime) {
         if (mConsentDialog != null && mConsentDialog.isShowing()) mConsentDialog.dismiss();
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(12);
+        root.setPadding(pad, pad, pad, pad);
+
+        TextView msg = new TextView(this);
         String current = mConsent.hasChoice()
-                ? "\n\n（今の設定：" + (mConsent.isNamesAllowed() ? "送信する" : "送信しない") + "）"
+                ? "\n（今の設定：名前は" + (mConsent.isNamesAllowed() ? "送る" : "送らない") + "）"
                 : "";
-        mConsentDialog = new AlertDialog.Builder(this)
+        msg.setText("おしゃべりの内容は、答えを作るために外部のAIサービスへ送られます。\n"
+                + "電話帳の名前（家族や友達の呼び名）もいっしょに送りますか？\n"
+                + "あとから右上のボタンで変えられます。" + current);
+        root.addView(msg);
+
+        Button allow = new Button(this);
+        allow.setText("名前も送る");
+        root.addView(allow);
+        Button deny = new Button(this);
+        deny.setText("名前は送らない");
+        root.addView(deny);
+        Button quit = null;
+        if (firstTime) {
+            quit = new Button(this);
+            quit.setText("使わない（終了する）");
+            root.addView(quit);
+        }
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(root);
+
+        final AlertDialog dlg = new AlertDialog.Builder(this)
                 .setTitle("外部送信の設定")
-                .setMessage("おしゃべりの内容は、応答を作るために外部のAIサービス（インターネット）へ送信されます。\n\n"
-                        + "電話帳に登録された名前（オーナー・家族・友達の呼び名）も、会話に活かすため"
-                        + "いっしょに送信してもよいですか？\n\n"
-                        + "この設定は右上のボタンからいつでも変更できます。" + current)
+                .setView(scroll)
                 .setCancelable(!firstTime)
-                .setPositiveButton("送信してもよい", (d, w) -> onConsentChosen(true, firstTime))
-                .setNegativeButton("名前は送らない", (d, w) -> onConsentChosen(false, firstTime))
-                .show();
+                .create();
+        allow.setOnClickListener(v -> { dlg.dismiss(); onConsentChosen(true, firstTime); });
+        deny.setOnClickListener(v -> { dlg.dismiss(); onConsentChosen(false, firstTime); });
+        if (quit != null) {
+            quit.setOnClickListener(v -> { dlg.dismiss(); finish(); });
+        }
+        mConsentDialog = dlg;
+        dlg.show();
     }
 
     /** 選択結果を保存して送信データへ即反映。初回フローではお礼を言って通常の会話を開始する。 */
@@ -610,13 +647,26 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         mConsent.setNamesAllowed(allowed);
         applyConsentToProfile();
         Log.v(TAG, "consent chosen: namesAllowed=" + allowed + " firstTime=" + firstTime);
+        if (isFinishing()) return; // 頭ボタン等の終了処理と競合したら、選択の保存だけで終える
         if (firstTime && mAwaitingConsent) {
             mAwaitingConsent = false;
-            String ack = allowed ? CONSENT_ACK_ALLOWED : CONSENT_ACK_DENIED;
-            addMessageView(ConversationStore.ROLE_ROBOT, ack, System.currentTimeMillis());
-            enqueueSpeechOnly(ack);
-            if (!mSpeaking) speakNextOrFinish(); // お礼→（キューが空になったら）待受へ
+            speakSystem(allowed ? CONSENT_ACK_ALLOWED : CONSENT_ACK_DENIED); // お礼→キューが空になったら待受へ
+            // 発話経路が死んでいた場合の保険：時間内に発話が進まずキューが残っていれば強制的に前へ進める
+            mHandler.postDelayed(() -> {
+                if (!isFinishing() && mSpeaking && !mUtteranceQueue.isEmpty()) {
+                    Log.w(TAG, "consent speech watchdog fired");
+                    mSpeaking = false;
+                    speakNextOrFinish();
+                }
+            }, CONSENT_WATCHDOG_MS);
         }
+    }
+
+    /** システム発話（同意フロー等）：画面に表示して発話するが、会話履歴ファイルへは保存しない。 */
+    private void speakSystem(String text) {
+        addMessageView(ConversationStore.ROLE_ROBOT, text, System.currentTimeMillis());
+        enqueueSpeechOnly(text);
+        if (!mSpeaking) speakNextOrFinish();
     }
 
     /** 同意状態を送信データへ反映（不許可なら名前情報を落とす）。ロボホン名はペルソナ生成に必要なため送る。 */
