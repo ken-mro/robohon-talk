@@ -1,6 +1,7 @@
 package com.robohon.template;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -12,6 +13,7 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -132,6 +134,21 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     /** 電話帳の登録者（家族・友達）。サーバへ渡してペルソナに反映。 */
     private List<RobohonProfile.Contact> mContacts = new ArrayList<>();
 
+    /** 外部送信（電話帳の名前）の同意状態。初回起動時は選択が終わるまで待受を開始しない。 */
+    private ConsentStore mConsent;
+    private boolean mAwaitingConsent = false;
+    private AlertDialog mConsentDialog = null;
+
+    /** 初回起動時に外部送信の選択を促す発話（キャラクター設定・「背中の画面」呼称はガイドライン準拠）。 */
+    private static final String CONSENT_INTRO_SPEECH =
+            "あのね、だいじなおはなしがあるんだ。ぼくとのおしゃべりは、インターネットの向こうの"
+                    + "かしこいコンピュータに手伝ってもらってるんだよ。電話帳のみんなのお名前も"
+                    + "いっしょに送っていいか、背中の画面で選んでね！";
+    private static final String CONSENT_ACK_ALLOWED =
+            "おっけー！じゃあ、みんなのお名前もいっしょにおぼえておくね。それじゃ、おはなししよう！";
+    private static final String CONSENT_ACK_DENIED =
+            "わかったー。お名前は送らないでおくね。それじゃ、おはなししよう！";
+
     /** 会話履歴（端末に全件保存）と表示ビュー、日記の保存、基本動作の実行。 */
     private ConversationStore mStore;
     private DiaryStore mDiary;
@@ -177,6 +194,13 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
 
         mHandler = new Handler(Looper.getMainLooper());
 
+        // 外部送信（電話帳の名前）の同意状態。タイトルバーのボタンからいつでも変更できる。
+        mConsent = new ConsentStore(this);
+        ImageButton consentButton = (ImageButton) findViewById(R.id.consentSettingsButton);
+        if (consentButton != null) {
+            consentButton.setOnClickListener(v -> showConsentDialog(!mConsent.hasChoice()));
+        }
+
         // 会話履歴: 端末から読み込んで画面に復元
         mStore = new ConversationStore(this);
         mDiary = new DiaryStore(this);
@@ -213,18 +237,33 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         mFinishAfterSpeak = false;
         mPendingLaunchApp = null;
         mPendingMotion = null;
+        mAwaitingConsent = false;
         if (mHandler != null) mHandler.removeCallbacksAndMessages(null);
 
         // 名前・電話帳を取得（取得不可なら既定）。中継サーバへ毎リクエスト同梱する。
+        // ただし電話帳の名前（オーナー・登録者）はユーザーが送信を許可した場合のみ同梱する。
         mRobotName = RobohonProfile.getRobotName(this);
         mOwnerName = RobohonProfile.getOwnerName(this);
         mContacts = RobohonProfile.getAllContacts(this);
-        Log.v(TAG, "names: robot=" + mRobotName + " owner=" + mOwnerName + " contacts=" + mContacts.size());
+        applyConsentToProfile();
+        Log.v(TAG, "names: robot=" + mRobotName + " owner=" + mOwnerName + " contacts=" + mContacts.size()
+                + " namesAllowed=" + mConsent.isNamesAllowed());
 
         // 顔認識による話し相手の自動特定は不採用（ユーザー決定）。
         // 理由: 顔検出は jp.co.sharp.android.rb.camera/.ui.FaceDetectionExternalCameraActivity という
         // 全画面カメラActivityを前面に立ち上げるため、この会話アプリが onPause→finish で即終了してしまい
         // 会話を継続できない。電話帳の登録者把握とオーナー/登録名での呼びかけは有効。
+
+        // 初回起動時は、外部送信の選択が終わるまで通常の会話（あいさつ→待受）を始めない。
+        // 案内発話は ACC_SAY 経由（greet と違い待受へ自動遷移しないため、選択前に音声認識が走らない）。
+        if (!mConsent.hasChoice()) {
+            mAwaitingConsent = true;
+            addMessageView(ConversationStore.ROLE_ROBOT, CONSENT_INTRO_SPEECH, System.currentTimeMillis());
+            enqueueSpeechOnly(CONSENT_INTRO_SPEECH);
+            speakNextOrFinish();
+            showConsentDialog(true);
+            return;
+        }
 
         // 起動あいさつは HVML greet が ${resolver:contacts:robot_name} で設定名のイントネーションで読む。
         // 画面表示用には名前入りテキストを log に出す（発話とは別経路）。履歴ファイルには保存しない。
@@ -239,6 +278,11 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         if (mHandler != null) mHandler.removeCallbacksAndMessages(null);
         mWaitingForRelay = false;
         mSpeaking = false;
+        // 同意ダイアログが出たまま終了するとウィンドウリークになるため閉じる
+        if (mConsentDialog != null) {
+            if (mConsentDialog.isShowing()) mConsentDialog.dismiss();
+            mConsentDialog = null;
+        }
         // 先にリスナー解除してから停止（stopSpeechの遅延キャンセル通知で状態機械へ再入しないように）
         VoiceUIManagerUtil.unregisterVoiceUIListener(mVUIManager, mVUIListener);
         VoiceUIManagerUtil.stopSpeech();
@@ -437,6 +481,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             return;
         }
         // キューが空
+        if (mAwaitingConsent) return;          // 初回の外部送信選択待ち：待受(音声認識)を開始しない
         if (mWaitingForRelay) return;          // サーバ応答待ち：待機（フィラーは別途）
         if (mPendingLaunchApp != null) {       // アプリ起動を終了より優先（→ onPauseで本アプリ終了）
             String app = mPendingLaunchApp;
@@ -500,6 +545,58 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private void enqueueRobotExclusive(String utterance) {
         mUtteranceQueue.clear();
         enqueueRobot(utterance);
+    }
+
+    /** 発話キューにだけ積む（会話履歴ファイルへは保存しない）。同意フロー等のシステム発話用。 */
+    private void enqueueSpeechOnly(String utterance) {
+        if (utterance == null || utterance.trim().isEmpty()) return;
+        mUtteranceQueue.add(utterance);
+    }
+
+    /**
+     * 外部送信（電話帳の名前）の選択ダイアログを背中の画面に表示。
+     * @param firstTime 初回起動フロー（キャンセル不可＝必ずどちらかを選ぶ）。設定変更時は false。
+     */
+    private void showConsentDialog(final boolean firstTime) {
+        if (mConsentDialog != null && mConsentDialog.isShowing()) mConsentDialog.dismiss();
+        String current = mConsent.hasChoice()
+                ? "\n\n（今の設定：" + (mConsent.isNamesAllowed() ? "送信する" : "送信しない") + "）"
+                : "";
+        mConsentDialog = new AlertDialog.Builder(this)
+                .setTitle("外部送信の設定")
+                .setMessage("おしゃべりの内容は、応答を作るために外部のAIサービス（インターネット）へ送信されます。\n\n"
+                        + "電話帳に登録された名前（オーナー・家族・友達の呼び名）も、会話に活かすため"
+                        + "いっしょに送信してもよいですか？\n\n"
+                        + "この設定は右上のボタンからいつでも変更できます。" + current)
+                .setCancelable(!firstTime)
+                .setPositiveButton("送信してもよい", (d, w) -> onConsentChosen(true, firstTime))
+                .setNegativeButton("名前は送らない", (d, w) -> onConsentChosen(false, firstTime))
+                .show();
+    }
+
+    /** 選択結果を保存して送信データへ即反映。初回フローではお礼を言って通常の会話を開始する。 */
+    private void onConsentChosen(boolean allowed, boolean firstTime) {
+        mConsent.setNamesAllowed(allowed);
+        // 許可へ変えた場合に備えて読み直してから、現在の同意状態を反映する
+        mOwnerName = RobohonProfile.getOwnerName(this);
+        mContacts = RobohonProfile.getAllContacts(this);
+        applyConsentToProfile();
+        Log.v(TAG, "consent chosen: namesAllowed=" + allowed + " firstTime=" + firstTime);
+        if (firstTime && mAwaitingConsent) {
+            mAwaitingConsent = false;
+            String ack = allowed ? CONSENT_ACK_ALLOWED : CONSENT_ACK_DENIED;
+            addMessageView(ConversationStore.ROLE_ROBOT, ack, System.currentTimeMillis());
+            enqueueSpeechOnly(ack);
+            if (!mSpeaking) speakNextOrFinish(); // お礼→（キューが空になったら）待受へ
+        }
+    }
+
+    /** 同意状態を送信データへ反映（不許可なら名前情報を落とす）。ロボホン名はペルソナ生成に必要なため送る。 */
+    private void applyConsentToProfile() {
+        if (mConsent == null || !mConsent.isNamesAllowed()) {
+            mOwnerName = null;
+            mContacts = new ArrayList<>();
+        }
     }
 
     /** 終了コマンド判定。 */
