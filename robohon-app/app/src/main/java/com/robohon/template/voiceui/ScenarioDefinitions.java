@@ -48,10 +48,6 @@ public class ScenarioDefinitions {
      * scene名: アプリ共通のシーン
      */
     public static final String SCENE_COMMON = PACKAGE + ".scene_common";
-    /**
-     * accost名：発話実行.
-     */
-    public static final String ACC_HELLO =  ScenarioDefinitions.PACKAGE + ".hello.say";
 
     /****************** LLM会話(chat.hvml)用の定義 *******************/
     /** accost: 起動あいさつ→待受 */
