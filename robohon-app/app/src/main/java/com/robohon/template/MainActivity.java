@@ -144,6 +144,20 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private ConsentStore mConsent;
     private boolean mAwaitingConsent = false;
     private AlertDialog mConsentDialog = null;
+    /** 初回同意のACK発話が完了して待受に入るまで true（watchdog の発火条件）。 */
+    private boolean mConsentAckPending = false;
+    /** 同意フローの発話が止まったまま待受まで進めない場合に、強制的に待受へ進める保険。 */
+    private final Runnable mConsentWatchdog = new Runnable() {
+        @Override
+        public void run() {
+            if (isFinishing() || !mConsentAckPending) return;
+            Log.w(TAG, "consent speech watchdog fired");
+            mConsentAckPending = false;
+            mSpeaking = false;
+            mUtteranceQueue.clear();
+            speakNextOrFinish(); // → 待受開始
+        }
+    };
 
     /** 初回起動時に外部送信の選択を促す発話（キャラクター設定・「背中の画面」呼称はガイドライン準拠）。 */
     private static final String CONSENT_INTRO_SPEECH =
@@ -154,8 +168,9 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             "おっけー！じゃあ、みんなのお名前もいっしょに送るね。それじゃ、おはなししよう！";
     private static final String CONSENT_ACK_DENIED =
             "わかったー。お名前は送らないでおくね。それじゃ、おはなししよう！";
-    /** 同意フローの発話が進まない場合に強制的に前へ進める保険のタイムアウト。 */
-    private static final long CONSENT_WATCHDOG_MS = 20000;
+    /** 同意フローの発話が進まない場合に強制的に前へ進める保険のタイムアウト。
+     *  正常系の最長（intro読み上げ中に選択→intro残り＋ACK）より長くして誤発火を防ぐ。 */
+    private static final long CONSENT_WATCHDOG_MS = 30000;
 
     /** 会話履歴（端末に全件保存）と表示ビュー、日記の保存、基本動作の実行。 */
     private ConversationStore mStore;
@@ -246,6 +261,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         mPendingLaunchApp = null;
         mPendingMotion = null;
         mAwaitingConsent = false;
+        mConsentAckPending = false;
         if (mHandler != null) mHandler.removeCallbacksAndMessages(null);
 
         // 名前・電話帳を取得（取得不可なら既定）。中継サーバへ毎リクエスト同梱する。
@@ -325,6 +341,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                     if (ScenarioDefinitions.FUNC_USER_SAID.equals(function)) {
                         onUserSaid(text);
                     } else if (ScenarioDefinitions.FUNC_SAY_DONE.equals(function)) {
+                        if (!mSpeaking) return; // 帰属不明の遅延イベントで二重前進しない
                         mSpeaking = false;
                         speakNextOrFinish();
                     }
@@ -394,7 +411,8 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         JSONObject req = new JSONObject();
         try {
             req.put("sessionId", SESSION_ID);
-            req.put("text", userText);
+            // 名前送信が不許可なら、今の発話テキストも履歴と同じ基準で伏せ字にする
+            req.put("text", mConsent.isNamesAllowed() ? userText : maskNames(userText));
             req.put("reset", mFirstTurn);
             req.put("robotName", mRobotName);
             if (mOwnerName != null) req.put("ownerName", mOwnerName);
@@ -536,16 +554,34 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             finish();
             return;
         }
-        if (VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_LISTEN)
-                == VoiceUIManager.VOICEUI_ERROR) {
-            Log.w(TAG, "startSpeech(listen) failed");
+        // 待受まで到達＝同意フローは完了。watchdog を解除する（通常会話中の誤発火防止）。
+        if (mConsentAckPending) {
+            mConsentAckPending = false;
+            mHandler.removeCallbacks(mConsentWatchdog);
         }
+        startListen();
+    }
+
+    /** 待受を開始する。失敗時は一度だけ遅延リトライ（それでも失敗ならログのみ）。 */
+    private void startListen() {
+        if (VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_LISTEN)
+                != VoiceUIManager.VOICEUI_ERROR) {
+            return;
+        }
+        Log.w(TAG, "startSpeech(listen) failed, retrying");
+        mHandler.postDelayed(() -> {
+            if (isFinishing() || mSpeaking || !mUtteranceQueue.isEmpty()) return;
+            if (VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_LISTEN)
+                    == VoiceUIManager.VOICEUI_ERROR) {
+                Log.w(TAG, "startSpeech(listen) retry failed");
+            }
+        }, 2000);
     }
 
     /** 基本動作の完了通知（MotionController から、UIスレッド）。会話へ復帰する。 */
     private void onMotionDone(boolean ok) {
         if (ok) {
-            VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_LISTEN);
+            startListen();
         } else {
             enqueueRobotExclusive("ごめんね、今はできなかったみたい。");
             speakNextOrFinish();
@@ -650,15 +686,10 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         if (isFinishing()) return; // 頭ボタン等の終了処理と競合したら、選択の保存だけで終える
         if (firstTime && mAwaitingConsent) {
             mAwaitingConsent = false;
+            mConsentAckPending = true; // 待受に入った時点で解除（speakNextOrFinish）
             speakSystem(allowed ? CONSENT_ACK_ALLOWED : CONSENT_ACK_DENIED); // お礼→キューが空になったら待受へ
-            // 発話経路が死んでいた場合の保険：時間内に発話が進まずキューが残っていれば強制的に前へ進める
-            mHandler.postDelayed(() -> {
-                if (!isFinishing() && mSpeaking && !mUtteranceQueue.isEmpty()) {
-                    Log.w(TAG, "consent speech watchdog fired");
-                    mSpeaking = false;
-                    speakNextOrFinish();
-                }
-            }, CONSENT_WATCHDOG_MS);
+            // 発話経路が死んでいた場合の保険：時間内に待受まで進まなければ強制的に進める
+            mHandler.postDelayed(mConsentWatchdog, CONSENT_WATCHDOG_MS);
         }
     }
 
@@ -680,20 +711,32 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         }
     }
 
+    /** マスク対象の既知の名前（長い順）。1文字の呼び名は無関係な語を巻き込むため対象外。 */
+    private List<String> maskTargetNames() {
+        List<String> names = new ArrayList<>();
+        if (mRawOwnerName != null && mRawOwnerName.length() >= 2) names.add(mRawOwnerName);
+        for (RobohonProfile.Contact c : mRawContacts) {
+            if (c.name != null && c.name.length() >= 2) names.add(c.name);
+        }
+        Collections.sort(names, (a, b) -> b.length() - a.length()); // 長い名前から（部分一致の崩れ防止）
+        return names;
+    }
+
+    /** テキスト中の電話帳の名前を伏せ字にする（送信不許可時用）。 */
+    private String maskNames(String text) {
+        if (text == null) return null;
+        for (String n : maskTargetNames()) text = text.replace(n, "おともだち");
+        return text;
+    }
+
     /**
      * 履歴中の電話帳の名前を伏せ字にする（送信不許可時用）。
      * 許可中に生成・保存された過去のロボ応答に名前が残っているため、フィールドを落とすだけでは
-     * 履歴経由で名前が外部へ送られ続ける。既知の名前を長い順に置換して防ぐ。
-     * 変換に失敗した場合は履歴を送らない（安全側）。
+     * 履歴経由で名前が外部へ送られ続ける。変換に失敗した場合は履歴を送らない（安全側）。
      */
     private JSONArray maskContactNames(JSONArray history) {
-        List<String> names = new ArrayList<>();
-        if (mRawOwnerName != null && !mRawOwnerName.isEmpty()) names.add(mRawOwnerName);
-        for (RobohonProfile.Contact c : mRawContacts) {
-            if (c.name != null && !c.name.isEmpty()) names.add(c.name);
-        }
+        List<String> names = maskTargetNames();
         if (names.isEmpty()) return history;
-        Collections.sort(names, (a, b) -> b.length() - a.length()); // 長い名前から（部分一致の崩れ防止）
         try {
             JSONArray out = new JSONArray();
             for (int i = 0; i < history.length(); i++) {
