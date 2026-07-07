@@ -30,31 +30,53 @@ export type Knowledge = {
   recent: { date: string; text: string }[];
 };
 
-/** ナレッジベースのサイズ上限（プロンプトへ毎ターン入るため小さく保つ）。 */
+/** ナレッジベースのサイズ上限（プロンプトへ毎ターン入るため小さく保つ）。digest.md の文字数と揃える。 */
 export const KNOWLEDGE_LIMITS = {
   maxProfileItems: 12,
   maxRecentItems: 8,
   maxItemChars: 60,
 } as const;
 
-/** 型不明の入力を Knowledge へ正規化する（上限適用・不正要素は捨てる）。 */
+/** YYYY-MM-DD 形式かつ実在する日付か（2026-13-45 のような不正カレンダー日を弾く）。 */
+export function isValidIsoDate(s: unknown): s is string {
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) return false;
+  // Date.parse は 2026-02-30 を 03-02 へ丸めるため、往復して一致を確認する。
+  return new Date(t).toISOString().slice(0, 10) === s;
+}
+
+/**
+ * KB項目の1文を無害化する。改行・タブ・制御文字を空白へ畳み、コードポイント単位で長さを丸める。
+ * 制御文字を残すと、システムプロンプト中に偽の「【最重要】」ブロックを注入できてしまうため必須。
+ */
+function cleanItem(s: string): string {
+  const collapsed = s
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return Array.from(collapsed).slice(0, KNOWLEDGE_LIMITS.maxItemChars).join("");
+}
+
+/** 型不明の入力を Knowledge へ正規化する（先にスライスしてから整形＝巨大配列でのDoSを防ぐ）。 */
 export function sanitizeKnowledge(raw: unknown): Knowledge | undefined {
   const k = raw as Partial<Knowledge> | undefined;
   if (!k || typeof k !== "object") return undefined;
   const profile = (Array.isArray(k.profile) ? k.profile : [])
+    .slice(0, KNOWLEDGE_LIMITS.maxProfileItems * 4) // 整形前に上限の緩め版で足切り（DoS対策）
     .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
-    .map((s) => s.trim().slice(0, KNOWLEDGE_LIMITS.maxItemChars))
+    .map(cleanItem)
+    .filter((s) => s.length > 0)
     .slice(0, KNOWLEDGE_LIMITS.maxProfileItems);
   const recent = (Array.isArray(k.recent) ? k.recent : [])
+    .slice(0, KNOWLEDGE_LIMITS.maxRecentItems * 4)
     .filter(
       (r): r is { date: string; text: string } =>
-        !!r &&
-        typeof (r as any).date === "string" &&
-        /^\d{4}-\d{2}-\d{2}$/.test((r as any).date) &&
-        typeof (r as any).text === "string" &&
-        (r as any).text.trim().length > 0,
+        !!r && isValidIsoDate((r as any).date) && typeof (r as any).text === "string" && (r as any).text.trim().length > 0,
     )
-    .map((r) => ({ date: r.date, text: r.text.trim().slice(0, KNOWLEDGE_LIMITS.maxItemChars) }))
+    .map((r) => ({ date: r.date, text: cleanItem(r.text) }))
+    .filter((r) => r.text.length > 0)
     .slice(0, KNOWLEDGE_LIMITS.maxRecentItems);
   if (profile.length === 0 && recent.length === 0) return undefined;
   return { profile, recent };

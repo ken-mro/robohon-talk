@@ -1,6 +1,6 @@
 // 中継サーバの中核ロジック（HTTPフレームワーク非依存）。
 // ローカルは Express(app.ts) から、Cloudflare Workers は素の fetch ハンドラ(worker.ts) から呼ぶ。
-import type { ChatRequest, ChatResponse, ChatMessage } from "./types.js";
+import type { ChatRequest, ChatResponse, ChatMessage, Knowledge } from "./types.js";
 import { sanitizeKnowledge } from "./types.js";
 import { splitUtterances } from "./split.js";
 import { callClaude } from "./claude.js";
