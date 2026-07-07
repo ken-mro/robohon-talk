@@ -50,10 +50,10 @@ $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 
 ## E. 動作確認（ゲート判定）
 インストール後、シナリオ登録(`RegisterScenarioService`)が走り、ホーム起動ワードが有効になります。
-1. ロボホンに「**(ロボホン、)てんぷれーと**」/「**てんぷれーとしよう**」と話しかける（home.hvmlの起動ワード `WORD_APPLICATION` / `WORD_APPLICATION_FREEWORD`）。
-2. アプリが起動し、`onResume` の `startSpeech` で「**こんにちは！僕、ロボホン**」と発話すればゲート達成。
-3. 「**おはよう / こんにちは / こんばんは**」と話しかけると `reply` シナリオで応答（音声認識の確認）。
-4. 終了は **頭ボタン**（ホーム）押下 or バックグラウンドで `finish()`。
+1. ロボホンに「**{名前}**」/「**ねえねえ{名前}**」と話しかける（home.hvmlの起動ワード `WORD_APPLICATION` / `WORD_APPLICATION_FREEWORD`。{名前}は端末のロボホン名。詳細は末尾「起動ワード（現行）」）。
+2. アプリが起動し、`onResume` の `startSpeech` で greet（「**{名前}だよー。なになにー？**」）を発話すればゲート達成。※初回起動時は先に外部送信の同意ダイアログが背中の画面に出るので、選択してから会話が始まる。
+3. 何か話しかけると認識テキストが中継サーバ(Claude)へ渡り、応答が発話される（音声認識＋LLM会話の確認）。
+4. 終了は **頭ボタン**（ホーム）押下、または「ばいばい/またね」等の終了ワード、バックグラウンドで `finish()`。
 
 ### マイクを使わないテスト（任意・DevTool）
 `RbDevtool_V01_00_00.apk` を入れてONにすると `http://<ロボホンのIP>:48000` のWeb UIから「発話させる」「話しかける(Lvcsr:Basic/Kana注入)」が可能。マイク無しでシナリオ分岐を検証できる（devtool-manual.md参照）。
@@ -65,10 +65,17 @@ $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 - **モーション** → SR-S05BJは13サーボの歩行モデルなので歩行系 `behavior` も利用可（マナーモード/充電中/USB接続中など実行不可条件はガイドライン参照）。
 
 ## 起動ワード（現行）
-- 標準: 「**ロボコンを起動して**」（`${Local:WORD_APPLICATION} eq ろぼこん`）
-- フリーワード: 「**オッケーロボコン**」（`${Local:WORD_APPLICATION_FREEWORD} eq おっけーろぼこん`）
-- 定義: `app/src/main/assets/hvml/home/com_robohon_template_home.hvml`
-- **操作のコツ**: 認識が不安定なときは**頭ボタンを押して待ち受け状態にしてから**話す。「ロボコン」は「ロボホン」と紛れやすいので、誤認識が続く場合は別名（あいぼう/くろーど 等）へ変更。
+起動ワードは**その端末に設定されているロボホンの名前**（かな）で決まる。固定文言ではない。
+- 標準: 「**{名前}**」（`${Local:WORD_APPLICATION} eq {名前}`）
+- フリーワード: 「**ねえねえ{名前}**」（`${Local:WORD_APPLICATION_FREEWORD} eq ねえねえ{名前}`）
+- 定義: `app/src/main/assets/hvml/home/com_robohon_template_home.hvml`（プレースホルダ `__ROBO_KANA__`）
+- **名前の決まり方**: HVMLの `__ROBO_KANA__` を、インストール時に `RegisterScenarioService` が
+  アドレス帳のロボホン名（`RoboProfileData.getRbname()`、かな）へ置換する。取得できなければ既定「**ろぼほん**」。
+  → 名前が「たろう」なら起動ワードは「**たろう**」/「**ねえねえたろう**」。
+- **この端末での実際の名前を確認**: インストール時のログに出る。
+  `adb logcat -d | Select-String "home launch word kana"` で置換後の名前がわかる。
+- **操作のコツ**: 認識が不安定なときは**頭ボタンを押して待ち受け状態にしてから**話す。
+  誤認識が続く場合は本体でロボホンの名前を認識しやすい別名（あいぼう/くろーど 等）に変更すると安定する。
 
 ## ゲート結果（2026-06-28 達成）
 - [x] adb で実機認識（SR06M / Android8.1 / serial 355986300612273）
