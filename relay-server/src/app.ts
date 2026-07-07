@@ -4,6 +4,8 @@
 import express from "express";
 import type { ChatRequest } from "./types.js";
 import { handleChat, isBadRequest, isMock } from "./core.js";
+import type { DigestRequest } from "./digest.js";
+import { handleDigest, isBadDigestRequest } from "./digest.js";
 
 export const PORT = Number(process.env.PORT ?? 8787);
 
@@ -40,4 +42,11 @@ app.post("/chat", async (req, res) => {
     return res.status(400).json({ error: "sessionId と text は必須です" });
   }
   res.json(await handleChat(req.body as ChatRequest));
+});
+
+app.post("/digest", async (req, res) => {
+  if (isBadDigestRequest(req.body)) {
+    return res.status(400).json({ error: "sessionId・clientDate(YYYY-MM-DD)・messages は必須です" });
+  }
+  res.json(await handleDigest(req.body as DigestRequest));
 });
