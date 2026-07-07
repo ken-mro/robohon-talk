@@ -13,8 +13,11 @@ import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Date;
 import java.util.List;
+import java.util.Locale;
 
 /**
  * 会話履歴の端末保存（JSON Lines）.
@@ -117,6 +120,40 @@ public final class ConversationStore {
                 arr.put(o);
             } catch (Exception ignore) {
             }
+        }
+        return arr;
+    }
+
+    /**
+     * ナレッジ生成(/digest)用に、指定時刻より後のメッセージを返す。
+     * 各要素は {role:"user"|"assistant", content, date:"yyyy-MM-dd"}。多すぎる場合は新しい方を残す。
+     *
+     * @param sinceExclusiveMillis この時刻より後（>）のメッセージのみ。0 で全件。
+     * @param maxMessages          返す最大件数（新しい方を優先）。
+     */
+    public synchronized JSONArray messagesForDigestSince(long sinceExclusiveMillis, int maxMessages) {
+        SimpleDateFormat dayFmt = new SimpleDateFormat("yyyy-MM-dd", Locale.JAPAN);
+        List<Message> all = loadAll();
+        JSONArray arr = new JSONArray();
+        for (Message m : all) {
+            if (m.t <= sinceExclusiveMillis) continue;
+            if (m.text == null || m.text.trim().isEmpty()) continue;
+            try {
+                JSONObject o = new JSONObject();
+                o.put("role", ROLE_USER.equals(m.role) ? "user" : "assistant");
+                o.put("content", m.text);
+                o.put("date", dayFmt.format(new Date(m.t)));
+                arr.put(o);
+            } catch (Exception ignore) {
+            }
+        }
+        // 上限超過時は末尾（新しい方）を残す
+        if (arr.length() > maxMessages) {
+            JSONArray trimmed = new JSONArray();
+            for (int i = arr.length() - maxMessages; i < arr.length(); i++) {
+                trimmed.put(arr.opt(i));
+            }
+            return trimmed;
         }
         return arr;
     }

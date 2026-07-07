@@ -14,10 +14,75 @@ export type ChatRequest = {
   contacts?: ContactInfo[];
   /** 端末のローカル現在日時（整形済み文字列）。時刻/日付/曜日の質問に答えるため。 */
   clientTime?: string;
+  /** 会話から蓄積したナレッジベース（端末保存）。ペルソナに「おぼえていること」として注入する。 */
+  knowledge?: Knowledge;
 };
 
 /** 電話帳の登録者1人ぶん（呼び名と続柄）。 */
 export type ContactInfo = { name: string; relation?: string };
+
+/**
+ * 会話から蓄積したナレッジベース。正データは端末側に保存し、毎リクエスト同梱する（サーバはステートレス）。
+ * profile=変わりにくい事実（静的）、recent=最近の出来事（動的、date は YYYY-MM-DD）。
+ */
+export type Knowledge = {
+  profile: string[];
+  recent: { date: string; text: string }[];
+};
+
+/** ナレッジベースのサイズ上限（プロンプトへ毎ターン入るため小さく保つ）。digest.md の文字数と揃える。 */
+export const KNOWLEDGE_LIMITS = {
+  maxProfileItems: 12,
+  maxRecentItems: 8,
+  maxItemChars: 60,
+} as const;
+
+/** YYYY-MM-DD 形式かつ実在する日付か（2026-13-45 のような不正カレンダー日を弾く）。 */
+export function isValidIsoDate(s: unknown): s is string {
+  if (typeof s !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return false;
+  const t = Date.parse(s);
+  if (Number.isNaN(t)) return false;
+  // Date.parse は 2026-02-30 を 03-02 へ丸めるため、往復して一致を確認する。
+  return new Date(t).toISOString().slice(0, 10) === s;
+}
+
+/**
+ * KB項目の1文を無害化する。改行・タブ・制御文字を空白へ畳み、隅付き括弧【】も除去し、
+ * コードポイント単位で長さを丸める。これらを残すと、システムプロンプト中に偽の
+ * 「【最重要】」ブロックを注入できてしまうため必須（digest入力側の neutralize と対称）。
+ */
+function cleanItem(s: string): string {
+  const collapsed = s
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/[【】]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return Array.from(collapsed).slice(0, KNOWLEDGE_LIMITS.maxItemChars).join("");
+}
+
+/** 型不明の入力を Knowledge へ正規化する（先にスライスしてから整形＝巨大配列でのDoSを防ぐ）。 */
+export function sanitizeKnowledge(raw: unknown): Knowledge | undefined {
+  const k = raw as Partial<Knowledge> | undefined;
+  if (!k || typeof k !== "object") return undefined;
+  const profile = (Array.isArray(k.profile) ? k.profile : [])
+    .slice(0, KNOWLEDGE_LIMITS.maxProfileItems * 4) // 整形前に上限の緩め版で足切り（DoS対策）
+    .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+    .map(cleanItem)
+    .filter((s) => s.length > 0)
+    .slice(0, KNOWLEDGE_LIMITS.maxProfileItems);
+  const recent = (Array.isArray(k.recent) ? k.recent : [])
+    .slice(0, KNOWLEDGE_LIMITS.maxRecentItems * 4)
+    .filter(
+      (r): r is { date: string; text: string } =>
+        !!r && isValidIsoDate((r as any).date) && typeof (r as any).text === "string" && (r as any).text.trim().length > 0,
+    )
+    .map((r) => ({ date: r.date, text: cleanItem(r.text) }))
+    .filter((r) => r.text.length > 0)
+    .slice(0, KNOWLEDGE_LIMITS.maxRecentItems);
+  if (profile.length === 0 && recent.length === 0) return undefined;
+  return { profile, recent };
+}
 
 /** アプリ側が解釈する連携指示。アプリ起動 / 日記書き込み / 基本動作（歌・踊り・アクション）。 */
 export type Action =

@@ -2,13 +2,18 @@
 # デプロイ:
 #   npx wrangler login
 #   npx wrangler secret put ANTHROPIC_API_KEY   # キーはコードに置かない
-#   npx wrangler deploy
+#   pnpm deploy                                 # wrangler deploy 直叩きでも [build] で gen は走る
 # 払い出される https://robohon-talk.<subdomain>.workers.dev/chat をアプリの RELAY_URL に設定。
 name = "robohon-talk"
 main = "src/worker.ts"
 # Anthropic SDK が必要とする Node 互換(process 等)のため nodejs_compat を有効化。
 compatibility_date = "2025-11-01"
 compatibility_flags = ["nodejs_compat"]
+
+# prompts/*.md → src/prompts/*.gen.ts の生成。dev/deploy のどの起動経路でも
+# 古いプロンプトが使われないよう、wrangler 自身のビルドフックで必ず実行する。
+[build]
+command = "node scripts/gen-prompts.mjs"
 
 # 任意: モック動作で試すとき（キー不要）。本番では設定しない。
 # [vars]

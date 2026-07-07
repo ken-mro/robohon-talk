@@ -1,6 +1,7 @@
 package com.robohon.template;
 
 import android.app.Activity;
+import android.app.AlertDialog;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
@@ -12,6 +13,8 @@ import android.os.Looper;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.View;
+import android.widget.Button;
+import android.widget.ImageButton;
 import android.widget.LinearLayout;
 import android.widget.ScrollView;
 import android.widget.TextView;
@@ -29,6 +32,7 @@ import java.io.IOException;
 import java.text.SimpleDateFormat;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.Deque;
 import java.util.HashMap;
@@ -63,8 +67,23 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
      * 公開リポジトリのソースには載せない。未設定時はローカルLANの既定URL・トークン空。
      */
     private static final String RELAY_URL = BuildConfig.RELAY_URL;
+    /** ダイジェスト用URL。RELAY_URL の末尾 /chat を /digest に置換して導出（設定は1つで済む）。 */
+    private static final String DIGEST_URL = deriveDigestUrl(BuildConfig.RELAY_URL);
     private static final String RELAY_TOKEN = BuildConfig.RELAY_TOKEN;
     private static final String SESSION_ID = "robohon-1";
+
+    /** RELAY_URL(.../chat) から .../digest を導出。クエリ・末尾スラッシュを除いてから付け替える。 */
+    private static String deriveDigestUrl(String chatUrl) {
+        if (chatUrl == null) return null;
+        int q = chatUrl.indexOf('?');
+        String base = (q >= 0) ? chatUrl.substring(0, q) : chatUrl;
+        while (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        if (base.endsWith("/chat")) return base.substring(0, base.length() - 5) + "/digest";
+        return base + "/digest";
+    }
+
+    /** ダイジェストに渡す新規会話ログの上限（新しい方を優先。/digest 側でも再度丸める）。 */
+    private static final int DIGEST_MAX_MESSAGES = 200;
 
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
@@ -131,11 +150,55 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private String mOwnerName = null;
     /** 電話帳の登録者（家族・友達）。サーバへ渡してペルソナに反映。 */
     private List<RobohonProfile.Contact> mContacts = new ArrayList<>();
+    /** 電話帳から読んだ生の名前（同意に関わらず端末内で保持）。送信可否は applyConsentToProfile で
+     *  mOwnerName/mContacts へ反映し、不許可時は履歴のマスキング（maskContactNames）にも使う。 */
+    private String mRawOwnerName = null;
+    private List<RobohonProfile.Contact> mRawContacts = new ArrayList<>();
+
+    /** 外部送信（電話帳の名前）の同意状態。初回起動時は選択が終わるまで待受を開始しない。 */
+    private ConsentStore mConsent;
+    private boolean mAwaitingConsent = false;
+    private AlertDialog mConsentDialog = null;
+    /** 初回同意のACK発話が完了して待受に入るまで true（watchdog の発火条件）。 */
+    private boolean mConsentAckPending = false;
+    /** 同意フローの発話が止まったまま待受まで進めない場合に、強制的に待受へ進める保険。 */
+    private final Runnable mConsentWatchdog = new Runnable() {
+        @Override
+        public void run() {
+            if (isFinishing() || !mConsentAckPending) return;
+            Log.w(TAG, "consent speech watchdog fired");
+            mConsentAckPending = false;
+            mSpeaking = false;
+            mUtteranceQueue.clear();
+            speakNextOrFinish(); // → 待受開始
+        }
+    };
+
+    /** 初回起動時に外部送信の選択を促す発話（キャラクター設定・「背中の画面」呼称はガイドライン準拠）。 */
+    private static final String CONSENT_INTRO_SPEECH =
+            "あのね、だいじなおはなしがあるんだ。ぼくとのおしゃべりは、インターネットの向こうの"
+                    + "かしこいコンピュータに手伝ってもらってるんだよ。電話帳のみんなのお名前も"
+                    + "いっしょに送っていいか、背中の画面で選んでね！";
+    private static final String CONSENT_ACK_ALLOWED =
+            "おっけー！じゃあ、みんなのお名前もいっしょに送るね。それじゃ、おはなししよう！";
+    private static final String CONSENT_ACK_DENIED =
+            "わかったー。お名前は送らないでおくね。それじゃ、おはなししよう！";
+    /** 同意フローの発話が進まない場合に強制的に前へ進める保険のタイムアウト。
+     *  正常系の最長（intro読み上げ中に選択→intro残り＋ACK）より長くして誤発火を防ぐ。 */
+    private static final long CONSENT_WATCHDOG_MS = 30000;
 
     /** 会話履歴（端末に全件保存）と表示ビュー、日記の保存、基本動作の実行。 */
     private ConversationStore mStore;
     private DiaryStore mDiary;
     private MotionController mMotion;
+    /** ナレッジベース（おぼえていること）の端末保存。/chat に同梱し /digest で日次更新。 */
+    private KnowledgeStore mKnowledge;
+    /** 送信用に保持する現在のKB（onResume でロード。UIスレッドのみで読み書き）。 */
+    private JSONObject mKnowledgeJson = null;
+    /** KBの世代番号。「おぼえたことをけす」で増やし、進行中ダイジェストの遅延保存を無効化する。 */
+    private int mKnowledgeGen = 0;
+    /** ダイジェスト送信中フラグ（UIスレッドのみ）。二重onResumeでの並行二重送信を防ぐ。 */
+    private boolean mDigestRunning = false;
     private LinearLayout mMessageContainer;
     private ScrollView mScrollView;
     private TextView mEmptyView;
@@ -177,9 +240,17 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
 
         mHandler = new Handler(Looper.getMainLooper());
 
+        // 外部送信（電話帳の名前）の同意状態。タイトルバーのボタンからいつでも変更できる。
+        mConsent = new ConsentStore(this);
+        ImageButton consentButton = (ImageButton) findViewById(R.id.consentSettingsButton);
+        if (consentButton != null) {
+            consentButton.setOnClickListener(v -> showConsentDialog(!mConsent.hasChoice()));
+        }
+
         // 会話履歴: 端末から読み込んで画面に復元
         mStore = new ConversationStore(this);
         mDiary = new DiaryStore(this);
+        mKnowledge = new KnowledgeStore(this);
         // 基本動作（歌/踊り/アクション）の実行・結果受信。
         mMotion = new MotionController(this, this::onMotionDone);
         mMessageContainer = (LinearLayout) findViewById(R.id.messageContainer);
@@ -213,18 +284,39 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         mFinishAfterSpeak = false;
         mPendingLaunchApp = null;
         mPendingMotion = null;
+        mAwaitingConsent = false;
+        mConsentAckPending = false;
         if (mHandler != null) mHandler.removeCallbacksAndMessages(null);
 
         // 名前・電話帳を取得（取得不可なら既定）。中継サーバへ毎リクエスト同梱する。
+        // ただし電話帳の名前（オーナー・登録者）はユーザーが送信を許可した場合のみ同梱する。
         mRobotName = RobohonProfile.getRobotName(this);
-        mOwnerName = RobohonProfile.getOwnerName(this);
-        mContacts = RobohonProfile.getAllContacts(this);
-        Log.v(TAG, "names: robot=" + mRobotName + " owner=" + mOwnerName + " contacts=" + mContacts.size());
+        mRawOwnerName = RobohonProfile.getOwnerName(this);
+        mRawContacts = RobohonProfile.getAllContacts(this);
+        applyConsentToProfile();
+        Log.v(TAG, "names: robot=" + mRobotName + " owner=" + mOwnerName + " contacts=" + mContacts.size()
+                + " namesAllowed=" + mConsent.isNamesAllowed());
+
+        // ナレッジベースをロード（/chat に同梱）。名前不許可なら送信直前にマスクする。
+        mKnowledgeJson = mKnowledge.load();
 
         // 顔認識による話し相手の自動特定は不採用（ユーザー決定）。
         // 理由: 顔検出は jp.co.sharp.android.rb.camera/.ui.FaceDetectionExternalCameraActivity という
         // 全画面カメラActivityを前面に立ち上げるため、この会話アプリが onPause→finish で即終了してしまい
         // 会話を継続できない。電話帳の登録者把握とオーナー/登録名での呼びかけは有効。
+
+        // 初回起動時は、外部送信の選択が終わるまで通常の会話（あいさつ→待受）を始めない。
+        // 案内発話は ACC_SAY 経由（greet と違い待受へ自動遷移しないため、選択前に音声認識が走らない）。
+        if (!mConsent.hasChoice()) {
+            mAwaitingConsent = true;
+            speakSystem(CONSENT_INTRO_SPEECH);
+            showConsentDialog(true);
+            return;
+        }
+
+        // 1日1回、会話履歴からKBを更新（起動時に24時間経過していたら。バックグラウンド、会話は妨げない）。
+        // 同意ゲートを通過した後に呼ぶ（同意選択が済むまで外部送信を始めない）。
+        maybeRunDigest();
 
         // 起動あいさつは HVML greet が ${resolver:contacts:robot_name} で設定名のイントネーションで読む。
         // 画面表示用には名前入りテキストを log に出す（発話とは別経路）。履歴ファイルには保存しない。
@@ -239,6 +331,11 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         if (mHandler != null) mHandler.removeCallbacksAndMessages(null);
         mWaitingForRelay = false;
         mSpeaking = false;
+        // 同意ダイアログが出たまま終了するとウィンドウリークになるため閉じる
+        if (mConsentDialog != null) {
+            if (mConsentDialog.isShowing()) mConsentDialog.dismiss();
+            mConsentDialog = null;
+        }
         // 先にリスナー解除してから停止（stopSpeechの遅延キャンセル通知で状態機械へ再入しないように）
         VoiceUIManagerUtil.unregisterVoiceUIListener(mVUIManager, mVUIListener);
         VoiceUIManagerUtil.stopSpeech();
@@ -275,6 +372,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                     if (ScenarioDefinitions.FUNC_USER_SAID.equals(function)) {
                         onUserSaid(text);
                     } else if (ScenarioDefinitions.FUNC_SAY_DONE.equals(function)) {
+                        if (!mSpeaking) return; // 帰属不明の遅延イベントで二重前進しない
                         mSpeaking = false;
                         speakNextOrFinish();
                     }
@@ -290,6 +388,20 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                 }
                 break;
             }
+            case VoiceUIListenerImpl.ACTION_CANCELLED:
+            case VoiceUIListenerImpl.ACTION_REJECTED: {
+                // 割込み・棄却では say_done が来ない。発話中フラグを畳んで状態機械を再駆動する
+                //（放置すると mSpeaking=true のまま同意フロー・会話が止まったままになる）。
+                mHandler.post(() -> {
+                    if (isFinishing()) return;
+                    Log.w(TAG, "speech cancelled/rejected: event=" + event);
+                    if (mSpeaking) {
+                        mSpeaking = false;
+                        speakNextOrFinish();
+                    }
+                });
+                break;
+            }
             default:
                 break;
         }
@@ -298,6 +410,11 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     /** 認識テキスト受領 → 中継サーバへ問い合わせ。 */
     private void onUserSaid(String text) {
         Log.v(TAG, "user said: " + text);
+        // 設定ダイアログ表示中の認識結果は使わない（変更前の設定のまま外部送信するのを防ぐ）
+        if (mConsentDialog != null && mConsentDialog.isShowing()) {
+            speakNextOrFinish(); // キューが空なら待受へ戻る
+            return;
+        }
         // 認識失敗（空 or 全角VOICEPFエラー文字列）は聞き返して待受へ
         if (text == null || text.trim().isEmpty() || text.startsWith("ＶＯＩＣＥ")) {
             enqueueRobotExclusive("ごめんね、もう一回言ってくれる？");
@@ -325,7 +442,8 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         JSONObject req = new JSONObject();
         try {
             req.put("sessionId", SESSION_ID);
-            req.put("text", userText);
+            // 名前送信が不許可なら、今の発話テキストも履歴と同じ基準で伏せ字にする
+            req.put("text", mConsent.isNamesAllowed() ? userText : maskNames(userText));
             req.put("reset", mFirstTurn);
             req.put("robotName", mRobotName);
             if (mOwnerName != null) req.put("ownerName", mOwnerName);
@@ -334,8 +452,14 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             // 端末の現在日時を毎回同梱（時刻/日付/曜日の質問に会話で答えられるように）
             req.put("clientTime", mClientTimeFmt.format(new Date()));
             // 毎ターン履歴窓を同梱（ステートレス）。サーバはこれを文脈の真実として使う。
+            // 名前送信が不許可のときは、許可中に保存された過去応答に残る名前も含めて伏せ字にする。
             if (mPendingSeed != null && mPendingSeed.length() > 0) {
-                req.put("history", mPendingSeed);
+                req.put("history", mConsent.isNamesAllowed() ? mPendingSeed : maskContactNames(mPendingSeed));
+            }
+            // ナレッジベース（おぼえていること）を同梱。名前不許可ならKB内の名前もマスク。
+            if (mKnowledgeJson != null) {
+                req.put("knowledge",
+                        mConsent.isNamesAllowed() ? mKnowledgeJson : maskKnowledge(mKnowledgeJson));
             }
         } catch (Exception e) {
             Log.e(TAG, "json build error", e);
@@ -432,11 +556,20 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         String next = mUtteranceQueue.poll();
         if (next != null) {
             mCurrentUtterance = next;
+            int r = VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_SAY);
+            if (r == VoiceUIManager.VOICEUI_ERROR) {
+                // 発話を開始できない（マナーモード・接続不良等）。発話中扱いにすると
+                // say_done 待ちで固まるため、この発話は捨てて次へ進む。
+                Log.w(TAG, "startSpeech(say) failed, drop utterance");
+                mSpeaking = false;
+                speakNextOrFinish();
+                return;
+            }
             mSpeaking = true;
-            VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_SAY);
             return;
         }
         // キューが空
+        if (mAwaitingConsent) return;          // 初回の外部送信選択待ち：待受(音声認識)を開始しない
         if (mWaitingForRelay) return;          // サーバ応答待ち：待機（フィラーは別途）
         if (mPendingLaunchApp != null) {       // アプリ起動を終了より優先（→ onPauseで本アプリ終了）
             String app = mPendingLaunchApp;
@@ -457,24 +590,45 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             finish();
             return;
         }
-        VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_LISTEN);
+        // 待受まで到達＝同意フローは完了。watchdog を解除する（通常会話中の誤発火防止）。
+        if (mConsentAckPending) {
+            mConsentAckPending = false;
+            mHandler.removeCallbacks(mConsentWatchdog);
+        }
+        startListen();
+    }
+
+    /** 待受を開始する。失敗時は一度だけ遅延リトライ（それでも失敗ならログのみ）。 */
+    private void startListen() {
+        if (VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_LISTEN)
+                != VoiceUIManager.VOICEUI_ERROR) {
+            return;
+        }
+        Log.w(TAG, "startSpeech(listen) failed, retrying");
+        mHandler.postDelayed(() -> {
+            if (isFinishing() || mSpeaking || !mUtteranceQueue.isEmpty()) return;
+            if (VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_LISTEN)
+                    == VoiceUIManager.VOICEUI_ERROR) {
+                Log.w(TAG, "startSpeech(listen) retry failed");
+            }
+        }, 2000);
     }
 
     /** 基本動作の完了通知（MotionController から、UIスレッド）。会話へ復帰する。 */
     private void onMotionDone(boolean ok) {
         if (ok) {
-            VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_LISTEN);
+            startListen();
         } else {
             enqueueRobotExclusive("ごめんね、今はできなかったみたい。");
             speakNextOrFinish();
         }
     }
 
-    /** 待ち時間フィラーを1つ発話（履歴には残さない）。 */
+    /** 待ち時間フィラーを1つ発話（履歴には残さない）。発話開始に失敗したら黙ってスキップ。 */
     private void speakFiller(String text) {
         mCurrentUtterance = text;
-        mSpeaking = true;
-        VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_SAY);
+        mSpeaking = VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_SAY)
+                != VoiceUIManager.VOICEUI_ERROR;
     }
 
     private void scheduleFillers() {
@@ -500,6 +654,316 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private void enqueueRobotExclusive(String utterance) {
         mUtteranceQueue.clear();
         enqueueRobot(utterance);
+    }
+
+    /** 発話キューにだけ積む（会話履歴ファイルへは保存しない）。同意フロー等のシステム発話用。 */
+    private void enqueueSpeechOnly(String utterance) {
+        if (utterance == null || utterance.trim().isEmpty()) return;
+        mUtteranceQueue.add(utterance);
+    }
+
+    /**
+     * 外部送信（電話帳の名前）の選択ダイアログを背中の画面に表示。
+     * 背面LCD(240x320)でも選択肢の文言が読み切れるよう、ボタンは縦積みのカスタムビューにする。
+     * @param firstTime 初回起動フロー（キャンセル不可。「使わない＝終了」の選択肢も出す）。設定変更時は false。
+     */
+    private void showConsentDialog(final boolean firstTime) {
+        if (mConsentDialog != null && mConsentDialog.isShowing()) mConsentDialog.dismiss();
+
+        LinearLayout root = new LinearLayout(this);
+        root.setOrientation(LinearLayout.VERTICAL);
+        int pad = dp(12);
+        root.setPadding(pad, pad, pad, pad);
+
+        TextView msg = new TextView(this);
+        String current = mConsent.hasChoice()
+                ? "\n（今の設定：名前は" + (mConsent.isNamesAllowed() ? "送る" : "送らない") + "）"
+                : "";
+        msg.setText("おしゃべりの内容は、答えを作るために外部のAIサービスへ送られます。\n"
+                + "電話帳の名前（家族や友達の呼び名）もいっしょに送りますか？\n"
+                + "あとから右上のボタンで変えられます。" + current);
+        root.addView(msg);
+
+        Button allow = new Button(this);
+        allow.setText("名前も送る");
+        root.addView(allow);
+        Button deny = new Button(this);
+        deny.setText("名前は送らない");
+        root.addView(deny);
+        Button quit = null;
+        Button forget = null;
+        if (firstTime) {
+            quit = new Button(this);
+            quit.setText("使わない（終了する）");
+            root.addView(quit);
+        } else {
+            // 設定変更時は「おぼえたことをけす」も出す（同意フローと一貫した記憶の管理手段）。
+            forget = new Button(this);
+            forget.setText("おぼえたことをけす");
+            root.addView(forget);
+        }
+
+        ScrollView scroll = new ScrollView(this);
+        scroll.addView(root);
+
+        final AlertDialog dlg = new AlertDialog.Builder(this)
+                .setTitle("外部送信の設定")
+                .setView(scroll)
+                .setCancelable(!firstTime)
+                .create();
+        allow.setOnClickListener(v -> { dlg.dismiss(); onConsentChosen(true, firstTime); });
+        deny.setOnClickListener(v -> { dlg.dismiss(); onConsentChosen(false, firstTime); });
+        if (quit != null) {
+            quit.setOnClickListener(v -> { dlg.dismiss(); finish(); });
+        }
+        if (forget != null) {
+            forget.setOnClickListener(v -> { dlg.dismiss(); confirmForgetKnowledge(); });
+        }
+        mConsentDialog = dlg;
+        dlg.show();
+    }
+
+    /** 「おぼえたことをけす」の確認ダイアログ → KBクリア。 */
+    private void confirmForgetKnowledge() {
+        if (mConsentDialog != null && mConsentDialog.isShowing()) mConsentDialog.dismiss();
+        mConsentDialog = new AlertDialog.Builder(this)
+                .setTitle("おぼえたことをけす")
+                .setMessage("ロボホンが会話からおぼえたこと（名前・好きなもの・さいきんの出来事など）を"
+                        + "ぜんぶ消します。よろしいですか？\n（会話の履歴は消えません）")
+                .setPositiveButton("けす", (d, w) -> {
+                    if (mKnowledge != null) mKnowledge.clear(System.currentTimeMillis());
+                    mKnowledgeJson = null;
+                    mKnowledgeGen++; // 進行中ダイジェストの遅延保存で復活させない
+                    Log.v(TAG, "knowledge cleared by user");
+                })
+                .setNegativeButton("やめる", null)
+                .show();
+    }
+
+    /** 選択結果を保存して送信データへ即反映。初回フローではお礼を言って通常の会話を開始する。 */
+    private void onConsentChosen(boolean allowed, boolean firstTime) {
+        mConsent.setNamesAllowed(allowed);
+        applyConsentToProfile();
+        Log.v(TAG, "consent chosen: namesAllowed=" + allowed + " firstTime=" + firstTime);
+        if (isFinishing()) return; // 頭ボタン等の終了処理と競合したら、選択の保存だけで終える
+        if (firstTime && mAwaitingConsent) {
+            mAwaitingConsent = false;
+            mConsentAckPending = true; // 待受に入った時点で解除（speakNextOrFinish）
+            speakSystem(allowed ? CONSENT_ACK_ALLOWED : CONSENT_ACK_DENIED); // お礼→キューが空になったら待受へ
+            // 発話経路が死んでいた場合の保険：時間内に待受まで進まなければ強制的に進める
+            mHandler.postDelayed(mConsentWatchdog, CONSENT_WATCHDOG_MS);
+        }
+    }
+
+    /** システム発話（同意フロー等）：画面に表示して発話するが、会話履歴ファイルへは保存しない。 */
+    private void speakSystem(String text) {
+        addMessageView(ConversationStore.ROLE_ROBOT, text, System.currentTimeMillis());
+        enqueueSpeechOnly(text);
+        if (!mSpeaking) speakNextOrFinish();
+    }
+
+    /** 同意状態を送信データへ反映（不許可なら名前情報を落とす）。ロボホン名はペルソナ生成に必要なため送る。 */
+    private void applyConsentToProfile() {
+        if (mConsent != null && mConsent.isNamesAllowed()) {
+            mOwnerName = mRawOwnerName;
+            mContacts = mRawContacts;
+        } else {
+            mOwnerName = null;
+            mContacts = new ArrayList<>();
+        }
+    }
+
+    /** マスク対象の既知の名前（長い順）。1文字の呼び名は無関係な語を巻き込むため対象外。 */
+    private List<String> maskTargetNames() {
+        List<String> names = new ArrayList<>();
+        if (mRawOwnerName != null && mRawOwnerName.length() >= 2) names.add(mRawOwnerName);
+        for (RobohonProfile.Contact c : mRawContacts) {
+            if (c.name != null && c.name.length() >= 2) names.add(c.name);
+        }
+        Collections.sort(names, (a, b) -> b.length() - a.length()); // 長い名前から（部分一致の崩れ防止）
+        return names;
+    }
+
+    /** テキスト中の電話帳の名前を伏せ字にする（送信不許可時用）。 */
+    private String maskNames(String text) {
+        if (text == null) return null;
+        for (String n : maskTargetNames()) text = text.replace(n, "おともだち");
+        return text;
+    }
+
+    /**
+     * 履歴中の電話帳の名前を伏せ字にする（送信不許可時用）。
+     * 許可中に生成・保存された過去のロボ応答に名前が残っているため、フィールドを落とすだけでは
+     * 履歴経由で名前が外部へ送られ続ける。変換に失敗した場合は履歴を送らない（安全側）。
+     */
+    private JSONArray maskContactNames(JSONArray history) {
+        List<String> names = maskTargetNames();
+        if (names.isEmpty()) return history;
+        try {
+            JSONArray out = new JSONArray();
+            for (int i = 0; i < history.length(); i++) {
+                JSONObject m = history.getJSONObject(i);
+                String content = m.optString("content", "");
+                for (String n : names) content = content.replace(n, "おともだち");
+                JSONObject copy = new JSONObject();
+                copy.put("role", m.optString("role"));
+                copy.put("content", content);
+                out.put(copy);
+            }
+            return out;
+        } catch (Exception e) {
+            Log.w(TAG, "maskContactNames failed", e);
+            return new JSONArray();
+        }
+    }
+
+    /** KB(profile[]/recent[].text)中の電話帳の名前を伏せ字にする。失敗時は空KBを送る（安全側）。 */
+    private JSONObject maskKnowledge(JSONObject knowledge) {
+        List<String> names = maskTargetNames();
+        if (names.isEmpty() || knowledge == null) return knowledge;
+        try {
+            JSONObject out = new JSONObject();
+            JSONArray profile = knowledge.optJSONArray("profile");
+            JSONArray outProfile = new JSONArray();
+            if (profile != null) {
+                for (int i = 0; i < profile.length(); i++) {
+                    outProfile.put(maskAll(profile.optString(i, ""), names));
+                }
+            }
+            out.put("profile", outProfile);
+            JSONArray recent = knowledge.optJSONArray("recent");
+            JSONArray outRecent = new JSONArray();
+            if (recent != null) {
+                for (int i = 0; i < recent.length(); i++) {
+                    JSONObject r = recent.optJSONObject(i);
+                    if (r == null) continue;
+                    JSONObject copy = new JSONObject();
+                    copy.put("date", r.optString("date"));
+                    copy.put("text", maskAll(r.optString("text", ""), names));
+                    outRecent.put(copy);
+                }
+            }
+            out.put("recent", outRecent);
+            return out;
+        } catch (Exception e) {
+            Log.w(TAG, "maskKnowledge failed", e);
+            try {
+                JSONObject empty = new JSONObject();
+                empty.put("profile", new JSONArray());
+                empty.put("recent", new JSONArray());
+                return empty;
+            } catch (Exception ignore) {
+                return null;
+            }
+        }
+    }
+
+    private static String maskAll(String text, List<String> names) {
+        for (String n : names) text = text.replace(n, "おともだち");
+        return text;
+    }
+
+    /**
+     * 1日1回、会話履歴からナレッジベースを更新する（差分更新）。
+     * 起動時に前回から24時間経過していれば、既存KB＋前回以降の新規会話ログを /digest へ送り、
+     * 返ってきた更新版KBを端末に保存する。バックグラウンドで実行し、会話フローは妨げない。
+     */
+    private void maybeRunDigest() {
+        if (DIGEST_URL == null || mKnowledge == null) return;
+        // 同意未選択、または名前送信が不許可のときはダイジェストしない。
+        // ダイジェストはKBに実名などの個人的事実を蓄積する処理なので、外部に名前を送れない状況では
+        // 動かさない（マスク版を書き戻して端末の正データを壊す事故＝実名の恒久消失も防げる）。
+        // また同意選択が済むまで外部送信自体を始めない（同意ゲートの一貫性）。
+        if (!mConsent.hasChoice() || !mConsent.isNamesAllowed()) return;
+        if (mDigestRunning) return; // 二重onResume等での並行二重送信を防ぐ
+        final long now = System.currentTimeMillis();
+        if (!mKnowledge.isDigestDue(now)) return;
+
+        final long since = mKnowledge.lastDigestAt();
+        // 送信データに使う既存KBと世代番号をUIスレッドで確定（以後の clear と競合しても古い保存を捨てる）。
+        final JSONObject existing = (mKnowledgeJson != null) ? mKnowledgeJson : mKnowledge.load();
+        final int gen = mKnowledgeGen;
+        mDigestRunning = true; // UIスレッドで即座に立てる（Threadのパース遅延に窓を作らない）
+
+        // 履歴の全件パース（肥大しうる）はUIスレッドを避けてバックグラウンドで行う（ANR防止）。
+        new Thread(() -> {
+            JSONArray messages = mStore.messagesForDigestSince(since, DIGEST_MAX_MESSAGES);
+            if (messages.length() == 0) {
+                // 新規会話ゼロ：送らず間隔も進めない（次回に持ち越し）。フラグは戻す。
+                runOnUiThread(() -> mDigestRunning = false);
+                return;
+            }
+            mKnowledge.markAttempt(now); // 送るのでバックオフ起点を記録（成否に関わらず）
+
+            JSONObject req = new JSONObject();
+            try {
+                req.put("sessionId", SESSION_ID);
+                req.put("clientDate", new SimpleDateFormat("yyyy-MM-dd", Locale.JAPAN).format(new Date(now)));
+                // 名前許可時のみここに到達するのでマスク不要（実データをそのまま送る）。
+                req.put("knowledge", existing);
+                req.put("messages", messages);
+            } catch (Exception e) {
+                Log.e(TAG, "digest json build error", e);
+                runOnUiThread(() -> mDigestRunning = false);
+                return;
+            }
+
+            Request.Builder rb = new Request.Builder()
+                    .url(DIGEST_URL)
+                    .post(RequestBody.create(req.toString(), JSON));
+            if (RELAY_TOKEN != null && !RELAY_TOKEN.isEmpty()) {
+                rb.header("X-Relay-Token", RELAY_TOKEN);
+            }
+            mHttp.newCall(rb.build()).enqueue(new Callback() {
+                @Override
+                public void onFailure(Call call, IOException e) {
+                    Log.w(TAG, "digest failed (keep existing knowledge): " + e);
+                    runOnUiThread(() -> mDigestRunning = false);
+                }
+
+                @Override
+                public void onResponse(Call call, Response response) {
+                    String body = null;
+                    try {
+                        if (response.isSuccessful() && response.body() != null) body = response.body().string();
+                    } catch (IOException e) {
+                        Log.w(TAG, "digest read error", e);
+                    } finally {
+                        response.close();
+                    }
+                    final String json = body;
+                    runOnUiThread(() -> {
+                        mDigestRunning = false;
+                        onDigestResponse(json, now, gen);
+                    });
+                }
+            });
+        }, "digest").start();
+    }
+
+    /** ダイジェスト応答を保存し、次回間隔の起点を更新（UIスレッド）。 */
+    private void onDigestResponse(String json, long digestedAt, int gen) {
+        if (isFinishing() || json == null) return;
+        // 送信後に「おぼえたことをけす」が実行されていたら、古いKBを保存して消去を無かったことにしない。
+        if (gen != mKnowledgeGen) {
+            Log.v(TAG, "digest response discarded (knowledge was cleared)");
+            return;
+        }
+        try {
+            JSONObject obj = new JSONObject(json);
+            JSONObject knowledge = obj.optJSONObject("knowledge");
+            if (knowledge != null) {
+                mKnowledge.save(knowledge);
+                mKnowledgeJson = knowledge; // 次ターンの /chat から新KBを使う
+                mKnowledge.markDigested(digestedAt);
+                JSONArray p = knowledge.optJSONArray("profile");
+                JSONArray r = knowledge.optJSONArray("recent");
+                Log.v(TAG, "digest saved: profile=" + (p != null ? p.length() : 0)
+                        + " recent=" + (r != null ? r.length() : 0));
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "digest parse error (keep existing)", e);
+        }
     }
 
     /** 終了コマンド判定。 */

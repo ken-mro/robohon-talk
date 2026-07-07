@@ -4,4 +4,15 @@
     android:layout_width="match_parent"
     android:layout_height="@dimen/toolbar_height"
     >
+    <!-- 外部送信設定（ガイドライン4.4.3: アクションボタンはImageButtonでレイアウト配置） -->
+    <ImageButton
+        android:id="@+id/consentSettingsButton"
+        android:layout_width="@dimen/toolbar_item_button_width"
+        android:layout_height="@dimen/toolbar_item_button_height"
+        android:layout_gravity="end|center_vertical"
+        android:padding="@dimen/toolbar_item_button_padding"
+        android:background="?android:attr/selectableItemBackgroundBorderless"
+        android:contentDescription="@string/consent_settings_button"
+        android:scaleType="fitCenter"
+        android:src="@android:drawable/ic_menu_preferences"/>
 </Toolbar>

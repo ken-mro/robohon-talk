@@ -1,0 +1,2 @@
+# プロンプト正データは改行を LF に固定（autocrlf 環境差で生成結果が揺れないように）
+prompts/*.md text eol=lf

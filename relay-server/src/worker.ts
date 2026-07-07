@@ -3,6 +3,8 @@
 // 中核ロジックは core.ts を共有。ローカル(Node)は src/index.ts(Express)。
 import type { ChatRequest } from "./types.js";
 import { handleChat, isBadRequest, isMock } from "./core.js";
+import type { DigestRequest } from "./digest.js";
+import { handleDigest, isBadDigestRequest } from "./digest.js";
 
 type Env = { ANTHROPIC_API_KEY?: string; MOCK?: string; RELAY_TOKEN?: string };
 
@@ -24,7 +26,7 @@ export default {
       return json({ ok: true, mock: isMock() });
     }
 
-    if (request.method === "POST" && url.pathname === "/chat") {
+    if (request.method === "POST" && (url.pathname === "/chat" || url.pathname === "/digest")) {
       // 認証（合言葉）: RELAY_TOKEN を設定すると一致必須。公開URLの無断利用＝費用悪用を防ぐ。
       // 未設定なら fail-closed（503）でリクエストを通さない。必ず `wrangler secret put RELAY_TOKEN` を。
       const expected = env.RELAY_TOKEN;
@@ -32,16 +34,22 @@ export default {
       if (request.headers.get("x-relay-token") !== expected) {
         return json({ error: "unauthorized" }, 401);
       }
-      let body: ChatRequest;
+      let body: unknown;
       try {
-        body = (await request.json()) as ChatRequest;
+        body = await request.json();
       } catch {
         return json({ error: "invalid json" }, 400);
+      }
+      if (url.pathname === "/digest") {
+        if (isBadDigestRequest(body)) {
+          return json({ error: "sessionId・clientDate(YYYY-MM-DD)・messages は必須です" }, 400);
+        }
+        return json(await handleDigest(body as DigestRequest));
       }
       if (isBadRequest(body)) {
         return json({ error: "sessionId と text は必須です" }, 400);
       }
-      return json(await handleChat(body));
+      return json(await handleChat(body as ChatRequest));
     }
 
     return new Response("not found", { status: 404 });
