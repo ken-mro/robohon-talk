@@ -698,15 +698,19 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         root.addView(deny);
         Button quit = null;
         Button forget = null;
+        Button clearLog = null;
         if (firstTime) {
             quit = new Button(this);
             quit.setText("使わない（終了する）");
             root.addView(quit);
         } else {
-            // 設定変更時は「おぼえたことをけす」も出す（同意フローと一貫した記憶の管理手段）。
+            // 設定変更時は記憶・履歴の管理手段も出す（同意フローと一貫させる）。
             forget = new Button(this);
             forget.setText("おぼえたことをけす");
             root.addView(forget);
+            clearLog = new Button(this);
+            clearLog.setText("会話のきろくをけす");
+            root.addView(clearLog);
         }
 
         ScrollView scroll = new ScrollView(this);
@@ -725,8 +729,35 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         if (forget != null) {
             forget.setOnClickListener(v -> { dlg.dismiss(); confirmForgetKnowledge(); });
         }
+        if (clearLog != null) {
+            clearLog.setOnClickListener(v -> { dlg.dismiss(); confirmClearConversation(); });
+        }
         mConsentDialog = dlg;
         dlg.show();
+    }
+
+    /** 「会話のきろくをけす」の確認ダイアログ → 会話履歴クリア。 */
+    private void confirmClearConversation() {
+        if (mConsentDialog != null && mConsentDialog.isShowing()) mConsentDialog.dismiss();
+        mConsentDialog = new AlertDialog.Builder(this)
+                .setTitle("会話のきろくをけす")
+                .setMessage("画面に表示されている会話のきろくをぜんぶ消します。よろしいですか？\n"
+                        + "（ロボホンが「おぼえたこと」は消えません）")
+                .setPositiveButton("けす", (d, w) -> clearConversation())
+                .setNegativeButton("やめる", null)
+                .show();
+    }
+
+    /** 会話履歴（保存ファイル＋画面表示）を消す。KB（おぼえたこと）は別管理なので触らない。 */
+    private void clearConversation() {
+        if (mStore != null) mStore.clear();
+        if (mMessageContainer != null) mMessageContainer.removeAllViews();
+        mLastRenderedDay = null;
+        if (mEmptyView != null) mEmptyView.setVisibility(View.VISIBLE);
+        // 次ターンはサーバへ渡す履歴窓も空になり、サーバ側メモリもリセットさせる。
+        mPendingSeed = null;
+        mFirstTurn = true;
+        Log.v(TAG, "conversation history cleared by user");
     }
 
     /** 「おぼえたことをけす」の確認ダイアログ → KBクリア。 */

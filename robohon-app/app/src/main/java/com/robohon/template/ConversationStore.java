@@ -73,6 +73,18 @@ public final class ConversationStore {
         }
     }
 
+    /** 会話履歴をすべて消す（ファイル削除。消せなければ空で上書き）。 */
+    public synchronized void clear() {
+        if (mFile.exists() && !mFile.delete()) {
+            try (FileOutputStream out = new FileOutputStream(mFile)) {
+                // 中身を空にする（0バイト書き込み）
+                out.write(new byte[0]);
+            } catch (Exception e) {
+                Log.w(TAG, "clear truncate failed: " + e);
+            }
+        }
+    }
+
     /** 保存済みの全メッセージを古い順に返す（表示用）。 */
     public synchronized List<Message> loadAll() {
         List<Message> list = new ArrayList<>();
