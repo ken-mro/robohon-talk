@@ -23,9 +23,12 @@ public final class KnowledgeStore {
     private static final String FILE_NAME = "knowledge.json";
     private static final String PREFS = "knowledge";
     private static final String KEY_LAST_DIGEST_AT = "last_digest_at";
+    private static final String KEY_LAST_ATTEMPT_AT = "last_attempt_at";
 
     /** ダイジェストの最小間隔（24時間）。 */
     public static final long DIGEST_INTERVAL_MS = 24L * 60 * 60 * 1000;
+    /** 送信を試みてから次に試みるまでの最小間隔（失敗が続いても毎起動で全履歴を再送しない）。 */
+    public static final long ATTEMPT_BACKOFF_MS = 3L * 60 * 60 * 1000;
 
     private final File mFile;
     private final SharedPreferences mPrefs;
@@ -66,7 +69,7 @@ public final class KnowledgeStore {
             // 消せない場合は空KBで上書きして中身を消す
             save(emptyKnowledge());
         }
-        mPrefs.edit().remove(KEY_LAST_DIGEST_AT).apply();
+        mPrefs.edit().remove(KEY_LAST_DIGEST_AT).remove(KEY_LAST_ATTEMPT_AT).apply();
     }
 
     /** 前回ダイジェスト実行時刻（epoch millis）。未実行なら0。 */
@@ -74,12 +77,21 @@ public final class KnowledgeStore {
         return mPrefs.getLong(KEY_LAST_DIGEST_AT, 0L);
     }
 
-    /** ダイジェストが必要か（前回から24時間以上、または未実行）。 */
+    /**
+     * ダイジェストが必要か。前回成功から24時間以上、かつ前回“試行”から3時間以上経っていること。
+     * 試行間隔の条件で、サーバ障害などで成功しない間に毎起動で全履歴を再送するのを防ぐ。
+     */
     public synchronized boolean isDigestDue(long now) {
-        return now - lastDigestAt() >= DIGEST_INTERVAL_MS;
+        return now - lastDigestAt() >= DIGEST_INTERVAL_MS
+                && now - mPrefs.getLong(KEY_LAST_ATTEMPT_AT, 0L) >= ATTEMPT_BACKOFF_MS;
     }
 
-    /** ダイジェスト実行時刻を記録する。 */
+    /** 送信を試みた時刻を記録する（成否に関わらず。バックオフの起点）。 */
+    public synchronized void markAttempt(long at) {
+        mPrefs.edit().putLong(KEY_LAST_ATTEMPT_AT, at).apply();
+    }
+
+    /** ダイジェスト成功時刻を記録する。 */
     public synchronized void markDigested(long at) {
         mPrefs.edit().putLong(KEY_LAST_DIGEST_AT, at).apply();
     }
