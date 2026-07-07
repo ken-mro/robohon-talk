@@ -11,8 +11,8 @@
     "start": "node dist/index.js",
     "start:env": "node --env-file=.env dist/index.js",
     "test": "node scripts/gen-prompts.mjs && tsc && node --test \"dist/test/*.test.js\"",
-    "cf:dev": "node scripts/gen-prompts.mjs && wrangler dev",
-    "deploy": "node scripts/gen-prompts.mjs && wrangler deploy"
+    "cf:dev": "wrangler dev",
+    "deploy": "wrangler deploy"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.69.0",
