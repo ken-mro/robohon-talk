@@ -415,9 +415,15 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             speakNextOrFinish(); // キューが空なら待受へ戻る
             return;
         }
-        // 認識失敗（空 or 全角VOICEPFエラー文字列）は聞き返して待受へ
+        // 認識失敗の処理。VOICEPFエラーは全角文字列 ＶＯＩＣＥＰＦ＿ＥＲＲ＿xx で来る。
+        // ネットワーク系（クラウド認識に到達できない等）は「もう一回」では直らないので、
+        // 聞き返さず正直に状況を伝える。単に聞き取れなかった場合だけ聞き返す。
         if (text == null || text.trim().isEmpty() || text.startsWith("ＶＯＩＣＥ")) {
-            enqueueRobotExclusive("ごめんね、もう一回言ってくれる？");
+            boolean networkErr = text != null
+                    && (text.contains("ＮＥＴＷＯＲＫ") || text.contains("ＳＥＲＶＥＲ") || text.contains("ＴＩＭＥＯＵＴ"));
+            enqueueRobotExclusive(networkErr
+                    ? "ごめんね、いまインターネットとうまくつながれないみたい。Wi-Fiをかくにんしてみてね。"
+                    : "ごめんね、もう一回言ってくれる？");
             mPendingLaunchApp = null;
             speakNextOrFinish();
             return;
