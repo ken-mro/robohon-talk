@@ -197,6 +197,8 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private JSONObject mKnowledgeJson = null;
     /** KBの世代番号。「おぼえたことをけす」で増やし、進行中ダイジェストの遅延保存を無効化する。 */
     private int mKnowledgeGen = 0;
+    /** ダイジェスト送信中フラグ（UIスレッドのみ）。二重onResumeでの並行二重送信を防ぐ。 */
+    private boolean mDigestRunning = false;
     private LinearLayout mMessageContainer;
     private ScrollView mScrollView;
     private TextView mEmptyView;
@@ -729,7 +731,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                 .setMessage("ロボホンが会話からおぼえたこと（名前・好きなもの・さいきんの出来事など）を"
                         + "ぜんぶ消します。よろしいですか？\n（会話の履歴は消えません）")
                 .setPositiveButton("けす", (d, w) -> {
-                    if (mKnowledge != null) mKnowledge.clear();
+                    if (mKnowledge != null) mKnowledge.clear(System.currentTimeMillis());
                     mKnowledgeJson = null;
                     mKnowledgeGen++; // 進行中ダイジェストの遅延保存で復活させない
                     Log.v(TAG, "knowledge cleared by user");
@@ -873,6 +875,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         // 動かさない（マスク版を書き戻して端末の正データを壊す事故＝実名の恒久消失も防げる）。
         // また同意選択が済むまで外部送信自体を始めない（同意ゲートの一貫性）。
         if (!mConsent.hasChoice() || !mConsent.isNamesAllowed()) return;
+        if (mDigestRunning) return; // 二重onResume等での並行二重送信を防ぐ
         final long now = System.currentTimeMillis();
         if (!mKnowledge.isDigestDue(now)) return;
 
@@ -880,11 +883,16 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         // 送信データに使う既存KBと世代番号をUIスレッドで確定（以後の clear と競合しても古い保存を捨てる）。
         final JSONObject existing = (mKnowledgeJson != null) ? mKnowledgeJson : mKnowledge.load();
         final int gen = mKnowledgeGen;
+        mDigestRunning = true; // UIスレッドで即座に立てる（Threadのパース遅延に窓を作らない）
 
         // 履歴の全件パース（肥大しうる）はUIスレッドを避けてバックグラウンドで行う（ANR防止）。
         new Thread(() -> {
             JSONArray messages = mStore.messagesForDigestSince(since, DIGEST_MAX_MESSAGES);
-            if (messages.length() == 0) return; // 新規会話ゼロ：送らず間隔も進めない（次回に持ち越し）
+            if (messages.length() == 0) {
+                // 新規会話ゼロ：送らず間隔も進めない（次回に持ち越し）。フラグは戻す。
+                runOnUiThread(() -> mDigestRunning = false);
+                return;
+            }
             mKnowledge.markAttempt(now); // 送るのでバックオフ起点を記録（成否に関わらず）
 
             JSONObject req = new JSONObject();
@@ -896,6 +904,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                 req.put("messages", messages);
             } catch (Exception e) {
                 Log.e(TAG, "digest json build error", e);
+                runOnUiThread(() -> mDigestRunning = false);
                 return;
             }
 
@@ -909,6 +918,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                 @Override
                 public void onFailure(Call call, IOException e) {
                     Log.w(TAG, "digest failed (keep existing knowledge): " + e);
+                    runOnUiThread(() -> mDigestRunning = false);
                 }
 
                 @Override
@@ -922,7 +932,10 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                         response.close();
                     }
                     final String json = body;
-                    runOnUiThread(() -> onDigestResponse(json, now, gen));
+                    runOnUiThread(() -> {
+                        mDigestRunning = false;
+                        onDigestResponse(json, now, gen);
+                    });
                 }
             });
         }, "digest").start();

@@ -47,8 +47,10 @@ app.use((req, res, next) => {
   });
 });
 
-// 認証（合言葉）: RELAY_TOKEN を設定した場合は POST に一致必須。worker.ts と挙動を揃える
-// （ローカルExpressを 0.0.0.0 やトンネルで露出したときの費用悪用、特に高単価な /digest を防ぐ）。
+// 認証（合言葉）: この Express は**ローカル開発専用**（本番は worker.ts=fail-closed）。
+// ローカルは MOCK/キー無しで手軽に回す用途があるため、RELAY_TOKEN 未設定時は認証しない（fail-open）。
+// 設定した場合は一致必須(401)。worker.ts と違い未設定=通す点に注意——Express を LAN/トンネルで
+// 露出する場合は必ず RELAY_TOKEN を設定すること（高単価な /digest の費用悪用を防ぐため）。
 app.use((req, res, next) => {
   if (req.method !== "POST") return next();
   const expected = process.env.RELAY_TOKEN;

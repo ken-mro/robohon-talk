@@ -63,13 +63,20 @@ public final class KnowledgeStore {
         }
     }
 
-    /** KBと前回ダイジェスト時刻を消す（「おぼえたことをけす」）。 */
-    public synchronized void clear() {
+    /**
+     * KBを消す（「おぼえたことをけす」）。
+     * ダイジェスト起点(lastDigestAt)は0に戻さず現在時刻にする。0にすると次回起動で全履歴から
+     * KBがまるごと再構築され「忘れて」が定着しないため、以後の新しい会話だけを対象にする。
+     */
+    public synchronized void clear(long now) {
         if (mFile.exists() && !mFile.delete()) {
             // 消せない場合は空KBで上書きして中身を消す
             save(emptyKnowledge());
         }
-        mPrefs.edit().remove(KEY_LAST_DIGEST_AT).remove(KEY_LAST_ATTEMPT_AT).apply();
+        mPrefs.edit()
+                .putLong(KEY_LAST_DIGEST_AT, now)
+                .remove(KEY_LAST_ATTEMPT_AT)
+                .apply();
     }
 
     /** 前回ダイジェスト実行時刻（epoch millis）。未実行なら0。 */

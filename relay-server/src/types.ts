@@ -47,13 +47,15 @@ export function isValidIsoDate(s: unknown): s is string {
 }
 
 /**
- * KB項目の1文を無害化する。改行・タブ・制御文字を空白へ畳み、コードポイント単位で長さを丸める。
- * 制御文字を残すと、システムプロンプト中に偽の「【最重要】」ブロックを注入できてしまうため必須。
+ * KB項目の1文を無害化する。改行・タブ・制御文字を空白へ畳み、隅付き括弧【】も除去し、
+ * コードポイント単位で長さを丸める。これらを残すと、システムプロンプト中に偽の
+ * 「【最重要】」ブロックを注入できてしまうため必須（digest入力側の neutralize と対称）。
  */
 function cleanItem(s: string): string {
   const collapsed = s
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001F\u007F]/g, " ")
+    .replace(/[【】]/g, " ")
     .replace(/\s+/g, " ")
     .trim();
   return Array.from(collapsed).slice(0, KNOWLEDGE_LIMITS.maxItemChars).join("");
