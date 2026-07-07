@@ -6,12 +6,13 @@
   "packageManager": "pnpm@10.33.0",
   "description": "RoBoHoN × Claude 中継サーバ (Phase B PoC). 端末からの認識テキストをClaude(Haiku)へ中継し、~150字分割の発話とアプリ連携actionを返す。",
   "scripts": {
-    "build": "tsc",
+    "gen": "node scripts/gen-prompts.mjs",
+    "build": "node scripts/gen-prompts.mjs && tsc",
     "start": "node dist/index.js",
     "start:env": "node --env-file=.env dist/index.js",
-    "test": "tsc && node --test \"dist/test/*.test.js\"",
-    "cf:dev": "wrangler dev",
-    "deploy": "wrangler deploy"
+    "test": "node scripts/gen-prompts.mjs && tsc && node --test \"dist/test/*.test.js\"",
+    "cf:dev": "node scripts/gen-prompts.mjs && wrangler dev",
+    "deploy": "node scripts/gen-prompts.mjs && wrangler deploy"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.69.0",
