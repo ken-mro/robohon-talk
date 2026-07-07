@@ -67,8 +67,23 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
      * 公開リポジトリのソースには載せない。未設定時はローカルLANの既定URL・トークン空。
      */
     private static final String RELAY_URL = BuildConfig.RELAY_URL;
+    /** ダイジェスト用URL。RELAY_URL の末尾 /chat を /digest に置換して導出（設定は1つで済む）。 */
+    private static final String DIGEST_URL = deriveDigestUrl(BuildConfig.RELAY_URL);
     private static final String RELAY_TOKEN = BuildConfig.RELAY_TOKEN;
     private static final String SESSION_ID = "robohon-1";
+
+    /** RELAY_URL(.../chat) から .../digest を導出。/chat 以外で終わる場合はパスを付け替える。 */
+    private static String deriveDigestUrl(String chatUrl) {
+        if (chatUrl == null) return null;
+        if (chatUrl.endsWith("/chat")) return chatUrl.substring(0, chatUrl.length() - 5) + "/digest";
+        int q = chatUrl.indexOf('?');
+        String base = (q >= 0) ? chatUrl.substring(0, q) : chatUrl;
+        if (base.endsWith("/")) base = base.substring(0, base.length() - 1);
+        return base + "/digest";
+    }
+
+    /** ダイジェストに渡す新規会話ログの上限（新しい方を優先。/digest 側でも再度丸める）。 */
+    private static final int DIGEST_MAX_MESSAGES = 200;
 
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
@@ -176,6 +191,10 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private ConversationStore mStore;
     private DiaryStore mDiary;
     private MotionController mMotion;
+    /** ナレッジベース（おぼえていること）の端末保存。/chat に同梱し /digest で日次更新。 */
+    private KnowledgeStore mKnowledge;
+    /** 送信用に保持する現在のKB（onResume でロード。UIスレッドのみで読み書き）。 */
+    private JSONObject mKnowledgeJson = null;
     private LinearLayout mMessageContainer;
     private ScrollView mScrollView;
     private TextView mEmptyView;
@@ -227,6 +246,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         // 会話履歴: 端末から読み込んで画面に復元
         mStore = new ConversationStore(this);
         mDiary = new DiaryStore(this);
+        mKnowledge = new KnowledgeStore(this);
         // 基本動作（歌/踊り/アクション）の実行・結果受信。
         mMotion = new MotionController(this, this::onMotionDone);
         mMessageContainer = (LinearLayout) findViewById(R.id.messageContainer);
@@ -272,6 +292,11 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         applyConsentToProfile();
         Log.v(TAG, "names: robot=" + mRobotName + " owner=" + mOwnerName + " contacts=" + mContacts.size()
                 + " namesAllowed=" + mConsent.isNamesAllowed());
+
+        // ナレッジベースをロード（/chat に同梱）。名前不許可なら送信直前にマスクする。
+        mKnowledgeJson = mKnowledge.load();
+        // 1日1回、会話履歴からKBを更新（起動時に24時間経過していたら。バックグラウンド、会話は妨げない）。
+        maybeRunDigest();
 
         // 顔認識による話し相手の自動特定は不採用（ユーザー決定）。
         // 理由: 顔検出は jp.co.sharp.android.rb.camera/.ui.FaceDetectionExternalCameraActivity という
@@ -424,6 +449,11 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             // 名前送信が不許可のときは、許可中に保存された過去応答に残る名前も含めて伏せ字にする。
             if (mPendingSeed != null && mPendingSeed.length() > 0) {
                 req.put("history", mConsent.isNamesAllowed() ? mPendingSeed : maskContactNames(mPendingSeed));
+            }
+            // ナレッジベース（おぼえていること）を同梱。名前不許可ならKB内の名前もマスク。
+            if (mKnowledgeJson != null) {
+                req.put("knowledge",
+                        mConsent.isNamesAllowed() ? mKnowledgeJson : maskKnowledge(mKnowledgeJson));
             }
         } catch (Exception e) {
             Log.e(TAG, "json build error", e);
@@ -752,6 +782,128 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         } catch (Exception e) {
             Log.w(TAG, "maskContactNames failed", e);
             return new JSONArray();
+        }
+    }
+
+    /** KB(profile[]/recent[].text)中の電話帳の名前を伏せ字にする。失敗時は空KBを送る（安全側）。 */
+    private JSONObject maskKnowledge(JSONObject knowledge) {
+        List<String> names = maskTargetNames();
+        if (names.isEmpty() || knowledge == null) return knowledge;
+        try {
+            JSONObject out = new JSONObject();
+            JSONArray profile = knowledge.optJSONArray("profile");
+            JSONArray outProfile = new JSONArray();
+            if (profile != null) {
+                for (int i = 0; i < profile.length(); i++) {
+                    outProfile.put(maskAll(profile.optString(i, ""), names));
+                }
+            }
+            out.put("profile", outProfile);
+            JSONArray recent = knowledge.optJSONArray("recent");
+            JSONArray outRecent = new JSONArray();
+            if (recent != null) {
+                for (int i = 0; i < recent.length(); i++) {
+                    JSONObject r = recent.optJSONObject(i);
+                    if (r == null) continue;
+                    JSONObject copy = new JSONObject();
+                    copy.put("date", r.optString("date"));
+                    copy.put("text", maskAll(r.optString("text", ""), names));
+                    outRecent.put(copy);
+                }
+            }
+            out.put("recent", outRecent);
+            return out;
+        } catch (Exception e) {
+            Log.w(TAG, "maskKnowledge failed", e);
+            try {
+                JSONObject empty = new JSONObject();
+                empty.put("profile", new JSONArray());
+                empty.put("recent", new JSONArray());
+                return empty;
+            } catch (Exception ignore) {
+                return null;
+            }
+        }
+    }
+
+    private static String maskAll(String text, List<String> names) {
+        for (String n : names) text = text.replace(n, "おともだち");
+        return text;
+    }
+
+    /**
+     * 1日1回、会話履歴からナレッジベースを更新する（差分更新）。
+     * 起動時に前回から24時間経過していれば、既存KB＋前回以降の新規会話ログを /digest へ送り、
+     * 返ってきた更新版KBを端末に保存する。バックグラウンドで実行し、会話フローは妨げない。
+     */
+    private void maybeRunDigest() {
+        if (DIGEST_URL == null || mKnowledge == null) return;
+        final long now = System.currentTimeMillis();
+        if (!mKnowledge.isDigestDue(now)) return;
+
+        final JSONArray messages = mStore.messagesForDigestSince(mKnowledge.lastDigestAt(), DIGEST_MAX_MESSAGES);
+        if (messages.length() == 0) {
+            // 新規会話が無ければLLMを呼ばず、次回に持ち越す（間隔タイマーは更新しない）
+            return;
+        }
+
+        final JSONObject existing = (mKnowledgeJson != null) ? mKnowledgeJson : mKnowledge.load();
+        JSONObject req = new JSONObject();
+        try {
+            req.put("sessionId", SESSION_ID);
+            req.put("clientDate", new SimpleDateFormat("yyyy-MM-dd", Locale.JAPAN).format(new Date(now)));
+            // 名前不許可なら、既存KB・会話ログとも名前をマスクして送る
+            boolean allow = mConsent.isNamesAllowed();
+            req.put("knowledge", allow ? existing : maskKnowledge(existing));
+            req.put("messages", allow ? messages : maskContactNames(messages));
+        } catch (Exception e) {
+            Log.e(TAG, "digest json build error", e);
+            return;
+        }
+
+        Request.Builder rb = new Request.Builder()
+                .url(DIGEST_URL)
+                .post(RequestBody.create(req.toString(), JSON));
+        if (RELAY_TOKEN != null && !RELAY_TOKEN.isEmpty()) {
+            rb.header("X-Relay-Token", RELAY_TOKEN);
+        }
+        mHttp.newCall(rb.build()).enqueue(new Callback() {
+            @Override
+            public void onFailure(Call call, IOException e) {
+                Log.w(TAG, "digest failed (keep existing knowledge): " + e);
+            }
+
+            @Override
+            public void onResponse(Call call, Response response) {
+                String body = null;
+                try {
+                    if (response.isSuccessful() && response.body() != null) body = response.body().string();
+                } catch (IOException e) {
+                    Log.w(TAG, "digest read error", e);
+                } finally {
+                    response.close();
+                }
+                final String json = body;
+                runOnUiThread(() -> onDigestResponse(json, now));
+            }
+        });
+    }
+
+    /** ダイジェスト応答を保存し、次回間隔の起点を更新（UIスレッド）。 */
+    private void onDigestResponse(String json, long digestedAt) {
+        if (isFinishing() || json == null) return;
+        try {
+            JSONObject obj = new JSONObject(json);
+            JSONObject knowledge = obj.optJSONObject("knowledge");
+            if (knowledge != null) {
+                mKnowledge.save(knowledge);
+                mKnowledgeJson = knowledge; // 次ターンの /chat から新KBを使う
+                mKnowledge.markDigested(digestedAt);
+                Log.v(TAG, "digest saved: profile=" + knowledge.optJSONArray("profile").length()
+                        + " recent=" + knowledge.optJSONArray("recent").length());
+            }
+        } catch (Exception e) {
+            Log.w(TAG, "digest parse error (keep existing)", e);
         }
     }
 
