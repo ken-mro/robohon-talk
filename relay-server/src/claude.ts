@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { personaTemplate } from "./prompts/persona.gen.js";
-import type { ChatMessage, ContactInfo, LlmResult } from "./types.js";
+import type { ChatMessage, ContactInfo, Knowledge, LlmResult } from "./types.js";
 
 // 音声会話の低遅延を優先。Haiku 4.5 は effort/adaptive thinking 非対応のため使わない。
 const MODEL = "claude-haiku-4-5";
@@ -29,12 +29,33 @@ function buildContactsBlock(contacts?: ContactInfo[]): string {
   );
 }
 
+/** ナレッジベースを「おぼえていること」ブロックへ整形（空なら空文字）。 */
+function buildKnowledgeBlock(knowledge?: Knowledge): string {
+  if (!knowledge) return "";
+  const lines: string[] = [];
+  if (knowledge.profile.length > 0) {
+    lines.push(`いつものこと: ${knowledge.profile.join("。")}。`);
+  }
+  if (knowledge.recent.length > 0) {
+    const items = knowledge.recent.map((r) => `[${r.date}] ${r.text}`).join(" / ");
+    lines.push(`さいきんのこと: ${items}`);
+  }
+  if (lines.length === 0) return "";
+  return (
+    `\n\n【おぼえていること（これまでの会話でおぼえたこと）】\n` +
+    lines.join("\n") +
+    `\n使い方: 会話に自然に活かす。聞かれてもいないのに列挙しない。` +
+    `相手の発言と食い違ったら相手の言うことを優先する（記憶ちがいかもしれないから断定しない）。`
+  );
+}
+
 /** 名前を反映した system プロンプトを組み立てる。 */
 export function buildSystemPrompt(opts?: {
   ownerName?: string;
   robotName?: string;
   contacts?: ContactInfo[];
   clientTime?: string;
+  knowledge?: Knowledge;
 }): string {
   const robotName = opts?.robotName && opts.robotName.trim() ? opts.robotName.trim() : "ロボホン";
   const ownerName = opts?.ownerName && opts.ownerName.trim() ? opts.ownerName.trim() : null;
@@ -60,7 +81,13 @@ export function buildSystemPrompt(opts?: {
     robotWordRule +
     nameRule +
     `これらは他のどの記述よりも優先する。\n\n`;
-  return directive + buildPersona(robotName) + buildContactsBlock(opts?.contacts) + timeBlock;
+  return (
+    directive +
+    buildPersona(robotName) +
+    buildContactsBlock(opts?.contacts) +
+    buildKnowledgeBlock(opts?.knowledge) +
+    timeBlock
+  );
 }
 
 // 連携ツール。app は論理名（アプリ側で各ロボホン純正アプリの起動 Intent にマップ）。
@@ -145,7 +172,13 @@ function getClient(): Anthropic {
 /** Claude を1回呼び、テキストと（あれば）tool_use を正規化して返す。 */
 export async function callClaude(
   messages: ChatMessage[],
-  names?: { ownerName?: string; robotName?: string; contacts?: ContactInfo[]; clientTime?: string },
+  names?: {
+    ownerName?: string;
+    robotName?: string;
+    contacts?: ContactInfo[];
+    clientTime?: string;
+    knowledge?: Knowledge;
+  },
 ): Promise<LlmResult> {
   const res = await getClient().messages.create({
     model: MODEL,
