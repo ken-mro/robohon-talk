@@ -685,10 +685,16 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         deny.setText("名前は送らない");
         root.addView(deny);
         Button quit = null;
+        Button forget = null;
         if (firstTime) {
             quit = new Button(this);
             quit.setText("使わない（終了する）");
             root.addView(quit);
+        } else {
+            // 設定変更時は「おぼえたことをけす」も出す（同意フローと一貫した記憶の管理手段）。
+            forget = new Button(this);
+            forget.setText("おぼえたことをけす");
+            root.addView(forget);
         }
 
         ScrollView scroll = new ScrollView(this);
@@ -704,8 +710,27 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         if (quit != null) {
             quit.setOnClickListener(v -> { dlg.dismiss(); finish(); });
         }
+        if (forget != null) {
+            forget.setOnClickListener(v -> { dlg.dismiss(); confirmForgetKnowledge(); });
+        }
         mConsentDialog = dlg;
         dlg.show();
+    }
+
+    /** 「おぼえたことをけす」の確認ダイアログ → KBクリア。 */
+    private void confirmForgetKnowledge() {
+        if (mConsentDialog != null && mConsentDialog.isShowing()) mConsentDialog.dismiss();
+        mConsentDialog = new AlertDialog.Builder(this)
+                .setTitle("おぼえたことをけす")
+                .setMessage("ロボホンが会話からおぼえたこと（名前・好きなもの・さいきんの出来事など）を"
+                        + "ぜんぶ消します。よろしいですか？\n（会話の履歴は消えません）")
+                .setPositiveButton("けす", (d, w) -> {
+                    if (mKnowledge != null) mKnowledge.clear();
+                    mKnowledgeJson = null;
+                    Log.v(TAG, "knowledge cleared by user");
+                })
+                .setNegativeButton("やめる", null)
+                .show();
     }
 
     /** 選択結果を保存して送信データへ即反映。初回フローではお礼を言って通常の会話を開始する。 */
