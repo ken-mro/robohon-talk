@@ -1043,9 +1043,18 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             "(ないで|しないで|なくてい|しなくてい|そのままで|変えないで|かえないで)");
 
     /**
+     * ロボホンの音声(TTS)が鳴るストリーム。実機(SR-S05BJ/Android8.1)で再生中トラックの
+     * stream type を確認した結果 STREAM_TTS(=9) だった（STREAM_MUSIC ではない）。
+     * AOSP/SHARPの隠しストリームのため定数が公開SDKに無く、整数値で指定する。
+     */
+    private static final int STREAM_TTS = 9;
+    /** 1回の上げ下げ幅。RoBoHoNの「音量レベル」1段ぶん（表4-3: レベル間隔≒2）に相当。 */
+    private static final int VOL_STEP = 2;
+
+    /**
      * 音量コマンドをローカル処理する。処理したら true（サーバへ送らない）。
-     * <p>ロボホンの声は STREAM_MUSIC で鳴る（マナーモードは STREAM_MUSIC を MUTE する仕様）。
-     * ガイドライン上、アプリが音量0(マナー化)にするのは禁止のため最小は1で止める。
+     * <p>ロボホンの声は STREAM_TTS で鳴る。歌などのメディアと一体感を出すため STREAM_MUSIC も追随させる。
+     * 0(無音)にはしない（下げても最小1で止める）。
      */
     private boolean maybeHandleVolume(String text) {
         if (text == null) return false;
@@ -1058,14 +1067,17 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         if (am == null) return false;
         // 応答待ち・フィラーの取消（このターンはサーバへ行かないため念のため畳む）。
         stopWaiting();
-        final int stream = AudioManager.STREAM_MUSIC; // ロボホンの声はSTREAM_MUSIC（マナーはこれをMUTE）
-        int max = am.getStreamMaxVolume(stream);
-        int cur = am.getStreamVolume(stream);
-        // 下げる場合は1未満にしない（0=マナー化は禁止）。既にミュート(0)なら上げ直さない。
-        int next = up ? Math.min(max, cur + 1) : (cur <= 1 ? cur : cur - 1);
-        if (next != cur) {
+        int max = am.getStreamMaxVolume(STREAM_TTS);
+        int cur = am.getStreamVolume(STREAM_TTS);
+        // 下げる場合は1未満にしない（既に0/1なら上げ直さない）。上げる場合は最大までクランプ。
+        int next = up ? Math.min(max, cur + VOL_STEP) : (cur <= 1 ? cur : Math.max(1, cur - VOL_STEP));
+        boolean changed = next != cur;
+        if (changed) {
             try {
-                am.setStreamVolume(stream, next, 0); // UIオーバーレイは出さない(0)
+                am.setStreamVolume(STREAM_TTS, next, 0); // UIオーバーレイは出さない(0)
+                // 歌などメディア音量も同じ値に追随（範囲はTTSと同じ0..15。念のためクランプ）。
+                int musicMax = am.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                am.setStreamVolume(AudioManager.STREAM_MUSIC, Math.max(1, Math.min(musicMax, next)), 0);
             } catch (SecurityException e) {
                 // マナーモード等で変更不可のことがある。会話は止めず正直に伝える。
                 Log.w(TAG, "setStreamVolume failed: " + e);
@@ -1075,13 +1087,13 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         }
         String reply;
         if (up) {
-            reply = (next == cur)
-                    ? "もうこれ以上は大きくできないよ。今がいちばん大きい声なんだ。"
-                    : "はーい、声を大きくしたよ！";
+            reply = changed
+                    ? "はーい、声を大きくしたよ！"
+                    : "もうこれ以上は大きくできないよ。今がいちばん大きい声なんだ。";
         } else {
-            reply = (next == cur)
-                    ? "これより小さくすると聞こえなくなっちゃうから、このくらいにしておくね。"
-                    : "はーい、声を小さくしたよ。";
+            reply = changed
+                    ? "はーい、声を小さくしたよ。"
+                    : "これより小さくすると聞こえなくなっちゃうから、このくらいにしておくね。";
         }
         speakSystemLine(reply);
         return true;
