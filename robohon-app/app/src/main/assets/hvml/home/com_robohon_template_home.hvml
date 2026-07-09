@@ -12,11 +12,11 @@
     </head>
     <body>
         <topic id="start" listen="false">
+            <!-- 「オッケー/了解」等の返事は言わせず、うなずきモーションのみ。
+                 あいさつはアプリ起動後の greet（名前入り「{名前}だよー、なになにー？」）に集約する。 -->
             <action index="1">
-                <speech>${resolver:speech_ok(${resolver:ok_id})}</speech>
                 <behavior id="${resolver:motion_ok(${resolver:ok_id})}" type="normal"/>
             </action>
-            <!-- あいさつはアプリ起動後の greet（名前入り）に集約。ここでは発話せず起動のみ。 -->
             <action index="2">
                 <behavior id="assign" type="normal"/>
                 <control function="start_activity" target="home">
