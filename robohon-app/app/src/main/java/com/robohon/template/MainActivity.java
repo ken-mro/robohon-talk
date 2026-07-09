@@ -7,6 +7,7 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.drawable.GradientDrawable;
+import android.media.AudioManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -40,6 +41,7 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.TimeUnit;
+import java.util.regex.Pattern;
 
 import jp.co.sharp.android.voiceui.VoiceUIManager;
 import jp.co.sharp.android.voiceui.VoiceUIVariable;
@@ -88,15 +90,18 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private static final MediaType JSON = MediaType.parse("application/json; charset=utf-8");
 
     /** 待ち時間フィラー（応答が遅いときだけ段階的に発話。速い応答では発火前に取消）。
-     *  「うんうん」→「ちょっと調べてみるね」→「なるほどなるほど」の順。最後の語以降も応答が無ければ
-     *  「なるほどなるほど」を一定間隔で繰り返す。 */
-    private static final String[] FILLER_TEXTS = {"うんうん", "ちょっと考えるね", "なるほどなるほど"};
+     *  「うんうん」→「えーっと」→「ちょっと考えるね」の三段階。以降も応答が無ければ
+     *  {@link #FILLER_REPEAT_TEXTS}（うーん／えーっと）を交互に一定間隔で繰り返す。
+     *  例: うんうん、えーっと、ちょっと考えるね、うーん、えーっと、うーん、えーっと… */
+    private static final String[] FILLER_TEXTS = {"うんうん", "えーっと", "ちょっと考えるね"};
+    /** 三段階の後に交互で繰り返す相づち（うーん→えーっと→うーん…）。 */
+    private static final String[] FILLER_REPEAT_TEXTS = {"うーん", "えーっと"};
     /** 最初の「うんうん」までの待ち。速い応答(<この値)は無音で即応答。 */
     private static final long FILLER_FIRST_DELAY = 700;
     /** 各フィラー発話後、次のフィラーまでの間隔（FILLER_TEXTS の i 番目の後）。 */
-    private static final long[] FILLER_GAPS = {1800, 2300};
-    /** 最後（なるほどなるほど）以降の繰り返し間隔。 */
-    private static final long FILLER_REPEAT_GAP = 3000;
+    private static final long[] FILLER_GAPS = {1500, 2000, 2300};
+    /** 三段階を過ぎた後（繰り返し相づち）の発話間隔。 */
+    private static final long FILLER_REPEAT_GAP = 2500;
     /** LLMへ渡す履歴の上限（直近Nメッセージ＝約10往復）。表示・保存は全件で別管理。 */
     private static final int SEED_MESSAGES = 20;
 
@@ -223,8 +228,15 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                 mHandler.postDelayed(this, 500); // 発話中は少し待って再試行
                 return;
             }
-            int idx = Math.min(mFillerIndex, FILLER_TEXTS.length - 1);
-            speakFiller(FILLER_TEXTS[idx]);
+            String text;
+            if (mFillerIndex < FILLER_TEXTS.length) {
+                text = FILLER_TEXTS[mFillerIndex];
+            } else {
+                // 三段階を過ぎたら FILLER_REPEAT_TEXTS を交互に繰り返す。
+                int r = (mFillerIndex - FILLER_TEXTS.length) % FILLER_REPEAT_TEXTS.length;
+                text = FILLER_REPEAT_TEXTS[r];
+            }
+            speakFiller(text);
             long gap = (mFillerIndex < FILLER_GAPS.length) ? FILLER_GAPS[mFillerIndex] : FILLER_REPEAT_GAP;
             mFillerIndex++;
             mHandler.postDelayed(this, gap);
@@ -426,6 +438,11 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                     : "ごめんね、もう一回言ってくれる？");
             mPendingLaunchApp = null;
             speakNextOrFinish();
+            return;
+        }
+        // 音量コマンド（例:「音量下げて」「もっと大きな声で」）はローカルで確定処理。
+        // サーバへ送らず会話履歴にも残さない（デバイス操作でありチャットではないため）。
+        if (maybeHandleVolume(text)) {
             return;
         }
         // ステートレス運用: 毎ターン、現発話を積む前の履歴窓をサーバへ渡す
@@ -1007,6 +1024,74 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private static boolean isEndCommand(String text) {
         return text != null
                 && text.matches(".*(終了|しゅうりょう|おしまい|ばいばい|バイバイ|さようなら|またね|とじて|閉じて).*");
+    }
+
+    /** 音量を上げる指示（「音量上げて」「もっと大きな声で」「声大きくして」等）。 */
+    private static final Pattern VOL_UP = Pattern.compile(
+            "(音量|ボリューム|ボリウム|おんりょう).{0,6}(上げ|あげ|大きく|おおきく|アップ)"
+                    + "|(声|こえ)(?!が).{0,4}(大きく|おおきく)"        // 「声を大きく」等（「声が大きくて」は除外）
+                    + "|もっと.{0,4}(大きな|大きい|おおきい)(声|こえ)"  // 「もっと大きな声で」
+                    + "|音量アップ");
+    /** 音量を下げる指示（「音量下げて」「もっと小さな声で」「声小さくして」等）。 */
+    private static final Pattern VOL_DOWN = Pattern.compile(
+            "(音量|ボリューム|ボリウム|おんりょう).{0,6}(下げ|さげ|小さく|ちいさく|ダウン)"
+                    + "|(声|こえ)(?!が).{0,4}(小さく|ちいさく)"        // 「声を小さく」等（「声が小さくて」は除外）
+                    + "|もっと.{0,4}(小さな|小さい|ちいさい)(声|こえ)"  // 「もっと小さな声で」
+                    + "|音量ダウン");
+    /** 否定・現状維持（「下げないで」「そのままで」等）。音量コマンド判定を打ち消す。 */
+    private static final Pattern VOL_NEG = Pattern.compile(
+            "(ないで|しないで|なくてい|しなくてい|そのままで|変えないで|かえないで)");
+
+    /**
+     * 音量コマンドをローカル処理する。処理したら true（サーバへ送らない）。
+     * <p>ロボホンの声は STREAM_MUSIC で鳴る（マナーモードは STREAM_MUSIC を MUTE する仕様）。
+     * ガイドライン上、アプリが音量0(マナー化)にするのは禁止のため最小は1で止める。
+     */
+    private boolean maybeHandleVolume(String text) {
+        if (text == null) return false;
+        if (VOL_NEG.matcher(text).find()) return false; // 「下げないで」「そのままで」等は通常会話へ
+        boolean up = VOL_UP.matcher(text).find();
+        boolean down = VOL_DOWN.matcher(text).find();
+        if (up == down) return false; // 非該当、または上げ下げ両方該当（曖昧）は通常会話へ回す
+
+        AudioManager am = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        if (am == null) return false;
+        // 応答待ち・フィラーの取消（このターンはサーバへ行かないため念のため畳む）。
+        stopWaiting();
+        final int stream = AudioManager.STREAM_MUSIC; // ロボホンの声はSTREAM_MUSIC（マナーはこれをMUTE）
+        int max = am.getStreamMaxVolume(stream);
+        int cur = am.getStreamVolume(stream);
+        // 下げる場合は1未満にしない（0=マナー化は禁止）。既にミュート(0)なら上げ直さない。
+        int next = up ? Math.min(max, cur + 1) : (cur <= 1 ? cur : cur - 1);
+        if (next != cur) {
+            try {
+                am.setStreamVolume(stream, next, 0); // UIオーバーレイは出さない(0)
+            } catch (SecurityException e) {
+                // マナーモード等で変更不可のことがある。会話は止めず正直に伝える。
+                Log.w(TAG, "setStreamVolume failed: " + e);
+                speakSystemLine("ごめんね、今は音の大きさを変えられないみたい。");
+                return true;
+            }
+        }
+        String reply;
+        if (up) {
+            reply = (next == cur)
+                    ? "もうこれ以上は大きくできないよ。今がいちばん大きい声なんだ。"
+                    : "はーい、声を大きくしたよ！";
+        } else {
+            reply = (next == cur)
+                    ? "これより小さくすると聞こえなくなっちゃうから、このくらいにしておくね。"
+                    : "はーい、声を小さくしたよ。";
+        }
+        speakSystemLine(reply);
+        return true;
+    }
+
+    /** システム的な一言を、キューを空にして即発話（会話履歴には残さない）。発話後は待受へ戻る。 */
+    private void speakSystemLine(String line) {
+        mUtteranceQueue.clear();
+        enqueueSpeechOnly(line);
+        speakNextOrFinish();
     }
 
     /** 電話帳の登録者を {name, relation} のJSON配列へ。 */
