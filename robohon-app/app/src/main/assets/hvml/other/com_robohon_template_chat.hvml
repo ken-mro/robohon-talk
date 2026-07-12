@@ -11,11 +11,10 @@
         <accost priority="75" topic_id="listen" word="com.robohon.template.chat.listen"/>
     </head>
     <body>
-        <!-- 起動時あいさつ → そのまま待受へ。
-             名前は ${resolver:contacts:robot_name}（端末設定のロボホン名）で発話＝設定のイントネーション。 -->
+        <!-- 起動時あいさつ → そのまま待受へ。名前は名乗らず短く応答する。 -->
         <topic id="greet" listen="false">
             <action index="1">
-                <speech>${resolver:contacts:robot_name}だよー。なになにー？</speech>
+                <speech>はーい！なにー？</speech>
                 <behavior id="assign" type="normal"/>
             </action>
             <next href="#listen" type="default"/>

@@ -335,9 +335,9 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         // 同意ゲートを通過した後に呼ぶ（同意選択が済むまで外部送信を始めない）。
         maybeRunDigest();
 
-        // 起動あいさつは HVML greet が ${resolver:contacts:robot_name} で設定名のイントネーションで読む。
-        // 画面表示用には名前入りテキストを log に出す（発話とは別経路）。履歴ファイルには保存しない。
-        addMessageView(ConversationStore.ROLE_ROBOT, mRobotName + "だよー。なになにー？", System.currentTimeMillis());
+        // 起動あいさつは HVML greet（"はーい！なにー？"）で発話する。名前は名乗らない。
+        // 画面表示用のテキストは発話とは別経路（履歴ファイルには保存しない）。
+        addMessageView(ConversationStore.ROLE_ROBOT, "はーい！なにー？", System.currentTimeMillis());
         VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_GREET);
     }
 
