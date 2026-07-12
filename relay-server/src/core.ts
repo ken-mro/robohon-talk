@@ -1,7 +1,7 @@
 // 中継サーバの中核ロジック（HTTPフレームワーク非依存）。
 // ローカルは Express(app.ts) から、Cloudflare Workers は素の fetch ハンドラ(worker.ts) から呼ぶ。
 import type { ChatRequest, ChatResponse, ChatMessage } from "./types.js";
-import { sanitizeKnowledge } from "./types.js";
+import { sanitizeCatalog, sanitizeKnowledge } from "./types.js";
 import { splitUtterances } from "./split.js";
 import { callClaude } from "./claude.js";
 import { callClaudeMock } from "./mockClaude.js";
@@ -79,6 +79,7 @@ export async function handleChat(body: ChatRequest): Promise<ChatResponse> {
           contacts: body.contacts,
           clientTime: body.clientTime,
           knowledge: sanitizeKnowledge(body.knowledge),
+          catalog: sanitizeCatalog(body.catalog),
         });
 
     history.push({ role: "assistant", content: llm.text });

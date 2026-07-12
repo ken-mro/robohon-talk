@@ -104,6 +104,11 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private static final long FILLER_REPEAT_GAP = 2500;
     /** LLMへ渡す履歴の上限（直近Nメッセージ＝約10往復）。表示・保存は全件で別管理。 */
     private static final int SEED_MESSAGES = 20;
+    /** サーバへ同梱する歌・ダンス名の各上限（純正コンテンツは通常これ未満）。 */
+    private static final int CATALOG_LIMIT = 60;
+    /** 歌・ダンスの依頼らしき発話（このときだけカタログを同梱＝毎ターンのトークン消費を避ける）。 */
+    private static final Pattern MUSIC_INTENT = Pattern.compile(
+            "歌|うたっ|うたを|うたって|唄|踊|おどっ|おどり|ダンス|曲");
 
     /** launch_app の論理名 → ロボホン純正アプリのパッケージ名。 */
     private static final Map<String, String> APP_PACKAGES = new HashMap<>();
@@ -484,6 +489,13 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                 req.put("knowledge",
                         mConsent.isNamesAllowed() ? mKnowledgeJson : maskKnowledge(mKnowledgeJson));
             }
+            // 端末に入っている歌・ダンスの一覧を同梱（LLMが実在タイトルから正確に選べるように）。
+            // 毎ターンだとトークン消費が増えるため、歌・ダンスの依頼らしき発話のときだけ送る。
+            // 個人情報ではない純正コンテンツ名。取得前（起動直後）は空で送らない。
+            if (userText != null && MUSIC_INTENT.matcher(userText).find()) {
+                JSONObject catalog = buildCatalogJson();
+                if (catalog.length() > 0) req.put("catalog", catalog);
+            }
         } catch (Exception e) {
             Log.e(TAG, "json build error", e);
         }
@@ -638,13 +650,31 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     }
 
     /** 基本動作の完了通知（MotionController から、UIスレッド）。会話へ復帰する。 */
-    private void onMotionDone(boolean ok) {
+    private void onMotionDone(boolean ok, String kind, String name) {
         if (ok) {
+            // 実際に演じた曲/ダンス/動作を会話履歴に残す（発話はしない）。
+            // これで次ターンのコンテキストに入り、ロボホンが「さっき何をしたか」を分かる。
+            String note = performedNote(kind, name);
+            if (note != null) addMessage(ConversationStore.ROLE_ROBOT, note);
             startListen();
         } else {
             enqueueRobotExclusive("ごめんね、今はできなかったみたい。");
             speakNextOrFinish();
         }
+    }
+
+    /**
+     * 実行結果を履歴に残す一言（名前が分かるときだけ）。写真や名前不明のときは null。
+     * かっこ書きのト書きは使わない（履歴＝assistant発話として次ターンに入り、Haikuが
+     * ト書き調を真似て読み上げに混ざるのを防ぐ）。自然な子どもの言い回しにする。
+     */
+    private static String performedNote(String kind, String name) {
+        if (name == null || name.trim().isEmpty()) return null;
+        String n = name.trim();
+        if ("sing".equals(kind)) return "「" + n + "」をうたったよ！";
+        if ("dance".equals(kind)) return "「" + n + "」をおどったよ！";
+        if ("action".equals(kind)) return "「" + n + "」をやってみたよ！";
+        return null;
     }
 
     /** 待ち時間フィラーを1つ発話（履歴には残さない）。発話開始に失敗したら黙ってスキップ。 */
@@ -1118,6 +1148,30 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                 arr.put(o);
             }
         } catch (Exception ignore) {
+        }
+        return arr;
+    }
+
+    /** 端末の歌・ダンス一覧を {songs:[...], dances:[...]} に整形（各上限あり。無ければ空）。 */
+    private JSONObject buildCatalogJson() {
+        JSONObject o = new JSONObject();
+        if (mMotion == null) return o;
+        try {
+            JSONArray songs = toJsonArray(mMotion.getSongNames(), CATALOG_LIMIT);
+            JSONArray dances = toJsonArray(mMotion.getDanceNames(), CATALOG_LIMIT);
+            if (songs.length() > 0) o.put("songs", songs);
+            if (dances.length() > 0) o.put("dances", dances);
+        } catch (Exception ignore) {
+        }
+        return o;
+    }
+
+    private static JSONArray toJsonArray(java.util.List<String> items, int max) {
+        JSONArray arr = new JSONArray();
+        if (items == null) return arr;
+        for (int i = 0; i < items.size() && arr.length() < max; i++) {
+            String s = items.get(i);
+            if (s != null && !s.trim().isEmpty()) arr.put(s.trim());
         }
         return arr;
     }

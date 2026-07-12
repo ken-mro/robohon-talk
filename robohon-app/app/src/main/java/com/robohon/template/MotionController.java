@@ -6,7 +6,9 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.util.Log;
 
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
 import jp.co.sharp.android.rb.action.ActionUtil;
@@ -17,7 +19,7 @@ import jp.co.sharp.android.rb.song.SongUtil;
 /**
  * 基本動作（歌う/踊る/アクション=歩く等）を sendBroadcast で実行する。
  * これらは別アプリの startActivity と違い前面を奪わない＝この会話アプリは終了しない。
- * 実行完了は結果ブロードキャストで受け取り、{@link Listener#onMotionDone(boolean)} で通知する。
+ * 実行完了は結果ブロードキャストで受け取り、{@link Listener#onMotionDone(boolean, String, String)} で通知する。
  * 端末が当該フレームワーク非対応でも落ちないよう、全て Throwable を握る。
  */
 public final class MotionController {
@@ -30,8 +32,14 @@ public final class MotionController {
     private static final String RESULT_PHOTO = PKG + ".action.RESULT_PHOTO";
 
     public interface Listener {
-        /** 動作完了通知。ok=true は正常終了、false は中断/失敗（USB接続中など）。 */
-        void onMotionDone(boolean ok);
+        /**
+         * 動作完了通知。ok=true は正常終了、false は中断/失敗（USB接続中など）。
+         *
+         * @param kind 実行した種別（sing/dance/action/photo）。不明なら null。
+         * @param name 実際に演じた曲/ダンス/動作の名前（結果IDを一覧で解決。おまかせでも実名）。
+         *             解決できなければ要求時の指定語、いずれも無ければ null。
+         */
+        void onMotionDone(boolean ok, String kind, String name);
     }
 
     private final Context mApp;
@@ -39,9 +47,14 @@ public final class MotionController {
     private BroadcastReceiver mReceiver;
 
     // id -> 名前（getInfo の結果）。名前一致で query から id を引く。
-    private LinkedHashMap<Integer, String> mSongs = new LinkedHashMap<>();
-    private LinkedHashMap<Integer, String> mDances = new LinkedHashMap<>();
-    private LinkedHashMap<Integer, String> mActions = new LinkedHashMap<>();
+    // 背景スレッドで代入・メインスレッドで参照するため volatile（可視性確保）。
+    private volatile LinkedHashMap<Integer, String> mSongs = new LinkedHashMap<>();
+    private volatile LinkedHashMap<Integer, String> mDances = new LinkedHashMap<>();
+    private volatile LinkedHashMap<Integer, String> mActions = new LinkedHashMap<>();
+
+    // 直近の実行で「指定」した名前（ASSIGN時のみ非null）。結果IDを引けないときのフォールバック用。
+    // おまかせ(NORMAL)時は null＝未再生の指定語を誤って記録しない。
+    private volatile String mPendingAssignedName;
 
     public MotionController(Context ctx, Listener listener) {
         mApp = ctx.getApplicationContext();
@@ -82,9 +95,12 @@ public final class MotionController {
      * 該当が無い/非対応で実行できなければ false（呼び出し側は即座に会話へ戻すこと）。
      */
     public boolean execute(String kind, String query) {
+        mPendingAssignedName = null; // 既定はおまかせ扱い（指定が一致したときだけ下で設定）
         try {
             if ("sing".equals(kind)) {
-                int id = findId(mSongs, query);
+                LinkedHashMap<Integer, String> songs = mSongs;
+                int id = findId(songs, query);
+                mPendingAssignedName = (id > 0) ? songs.get(id) : null;
                 Intent i = new Intent(SongUtil.ACTION_REQUEST_SONG);
                 i.putExtra(SongUtil.EXTRA_REPLYTO_ACTION, RESULT_SONG);
                 i.putExtra(SongUtil.EXTRA_REPLYTO_PKG, mApp.getPackageName());
@@ -97,7 +113,9 @@ public final class MotionController {
                 mApp.sendBroadcast(i);
                 return true;
             } else if ("dance".equals(kind)) {
-                int id = findId(mDances, query);
+                LinkedHashMap<Integer, String> dances = mDances;
+                int id = findId(dances, query);
+                mPendingAssignedName = (id > 0) ? dances.get(id) : null;
                 Intent i = new Intent(DanceUtil.ACTION_REQUEST_DANCE);
                 i.putExtra(DanceUtil.EXTRA_REPLYTO_ACTION, RESULT_DANCE);
                 i.putExtra(DanceUtil.EXTRA_REPLYTO_PKG, mApp.getPackageName());
@@ -110,11 +128,13 @@ public final class MotionController {
                 mApp.sendBroadcast(i);
                 return true;
             } else if ("action".equals(kind)) {
-                int id = findId(mActions, query);
+                LinkedHashMap<Integer, String> actions = mActions;
+                int id = findId(actions, query);
                 if (id <= 0) {
                     Log.w(TAG, "no action matched query=" + query);
                     return false; // 該当アクション無し → 実行できない
                 }
+                mPendingAssignedName = actions.get(id); // action は常に指定id
                 Intent i = new Intent(ActionUtil.ACTION_REQUEST_ACTION);
                 i.putExtra(ActionUtil.EXTRA_REPLYTO_ACTION, RESULT_ACTION);
                 i.putExtra(ActionUtil.EXTRA_REPLYTO_PKG, mApp.getPackageName());
@@ -136,6 +156,25 @@ public final class MotionController {
         return false;
     }
 
+    /** 端末に入っている歌の名前一覧（サーバ経由でLLMへ渡し、指定の的中率を上げる）。 */
+    public List<String> getSongNames() {
+        return names(mSongs);
+    }
+
+    /** 端末に入っているダンスの名前一覧。 */
+    public List<String> getDanceNames() {
+        return names(mDances);
+    }
+
+    private static List<String> names(LinkedHashMap<Integer, String> map) {
+        List<String> out = new ArrayList<>();
+        if (map == null) return out;
+        for (String v : map.values()) {
+            if (v != null && !v.trim().isEmpty()) out.add(v.trim());
+        }
+        return out;
+    }
+
     /** 名前一致で id を引く。query 空なら -1（＝おまかせ）。双方向 contains で緩く一致。 */
     private static int findId(LinkedHashMap<Integer, String> map, String query) {
         if (query == null) return -1;
@@ -155,25 +194,46 @@ public final class MotionController {
                 @Override
                 public void onReceive(Context context, Intent intent) {
                     boolean ok = false;
+                    String kind = null;
+                    String name = null;
                     try {
                         String act = intent.getAction();
                         if (RESULT_SONG.equals(act)) {
+                            kind = "sing";
                             ok = intent.getIntExtra(SongUtil.EXTRA_RESULT_CODE, SongUtil.RESULT_CANCELED)
                                     == SongUtil.RESULT_OK;
+                            name = resolveName(mSongs, intent.getIntExtra(SongUtil.EXTRA_RESULT_ID, -1));
                         } else if (RESULT_DANCE.equals(act)) {
+                            kind = "dance";
                             ok = intent.getIntExtra(DanceUtil.EXTRA_RESULT_CODE, DanceUtil.RESULT_CANCELED)
                                     == DanceUtil.RESULT_OK;
+                            name = resolveName(mDances, intent.getIntExtra(DanceUtil.EXTRA_RESULT_ID, -1));
                         } else if (RESULT_ACTION.equals(act)) {
+                            kind = "action";
                             ok = intent.getIntExtra(ActionUtil.EXTRA_RESULT_CODE, ActionUtil.RESULT_CANCELED)
                                     == ActionUtil.RESULT_OK;
+                            name = resolveName(mActions, intent.getIntExtra(ActionUtil.EXTRA_RESULT_ID, -1));
                         } else if (RESULT_PHOTO.equals(act)) {
+                            kind = "photo";
                             ok = intent.getIntExtra(ShootMediaUtil.EXTRA_RESULT_CODE, ShootMediaUtil.RESULT_CANCELED)
                                     == ShootMediaUtil.RESULT_OK;
                         }
                     } catch (Throwable t) {
                         Log.w(TAG, "result parse failed: " + t);
                     }
-                    if (mListener != null) mListener.onMotionDone(ok);
+                    if (mListener != null) mListener.onMotionDone(ok, kind, name);
+                }
+
+                /**
+                 * 実際に演じた名前を返す。結果ID→一覧で解決（おまかせでも実名）。引けないときは、
+                 * ASSIGN指定時のみ指定名にフォールバック。おまかせで未解決なら null（誤記録しない）。
+                 */
+                private String resolveName(LinkedHashMap<Integer, String> map, int resultId) {
+                    if (map != null && resultId > 0) {
+                        String n = map.get(resultId);
+                        if (n != null && !n.trim().isEmpty()) return n.trim();
+                    }
+                    return mPendingAssignedName; // ASSIGN時のみ非null。NORMALで未解決なら null
                 }
             };
             IntentFilter f = new IntentFilter();

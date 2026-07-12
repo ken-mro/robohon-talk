@@ -16,7 +16,40 @@ export type ChatRequest = {
   clientTime?: string;
   /** 会話から蓄積したナレッジベース（端末保存）。ペルソナに「おぼえていること」として注入する。 */
   knowledge?: Knowledge;
+  /** 端末に入っている歌・ダンスの一覧（純正コンテンツ名）。LLMが実在タイトルから指定できるように渡す。 */
+  catalog?: Catalog;
 };
+
+/** 端末に入っている歌・ダンスの名前一覧（perform_motion で実在タイトルを指定させるため）。 */
+export type Catalog = { songs?: string[]; dances?: string[] };
+
+/** カタログのサイズ上限（プロンプトへ毎ターン入るため抑える）。 */
+export const CATALOG_LIMITS = {
+  maxItems: 60,
+  maxItemChars: 40,
+} as const;
+
+/** 型不明の入力を Catalog へ正規化する（曲/ダンス名を無害化・重複除去・上限適用）。 */
+export function sanitizeCatalog(raw: unknown): Catalog | undefined {
+  const c = raw as Partial<Catalog> | undefined;
+  if (!c || typeof c !== "object") return undefined;
+  const clean = (arr: unknown): string[] => {
+    const seen = new Set<string>();
+    return (Array.isArray(arr) ? arr : [])
+      .slice(0, CATALOG_LIMITS.maxItems * 4) // 整形前に足切り（DoS対策）
+      .filter((s): s is string => typeof s === "string" && s.trim().length > 0)
+      .map((s) => Array.from(cleanItem(s)).slice(0, CATALOG_LIMITS.maxItemChars).join(""))
+      .filter((s) => s.length > 0 && !seen.has(s) && (seen.add(s), true))
+      .slice(0, CATALOG_LIMITS.maxItems);
+  };
+  const songs = clean(c.songs);
+  const dances = clean(c.dances);
+  if (songs.length === 0 && dances.length === 0) return undefined;
+  const out: Catalog = {};
+  if (songs.length > 0) out.songs = songs;
+  if (dances.length > 0) out.dances = dances;
+  return out;
+}
 
 /** 電話帳の登録者1人ぶん（呼び名と続柄）。 */
 export type ContactInfo = { name: string; relation?: string };

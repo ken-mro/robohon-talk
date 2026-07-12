@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { personaTemplate } from "./prompts/persona.gen.js";
-import type { ChatMessage, ContactInfo, Knowledge, LlmResult } from "./types.js";
+import type { Catalog, ChatMessage, ContactInfo, Knowledge, LlmResult } from "./types.js";
 
 // 音声会話の低遅延を優先。Haiku 4.5 は effort/adaptive thinking 非対応のため使わない。
 const MODEL = "claude-haiku-4-5";
@@ -47,6 +47,24 @@ function buildKnowledgeBlock(knowledge?: Knowledge): string {
   );
 }
 
+/** 端末に入っている歌・ダンスの一覧を、指定再生のための参照ブロックへ整形（空なら空文字）。 */
+function buildCatalogBlock(catalog?: Catalog): string {
+  if (!catalog) return "";
+  const songs = catalog.songs ?? [];
+  const dances = catalog.dances ?? [];
+  if (songs.length === 0 && dances.length === 0) return "";
+  const lines: string[] = [];
+  if (songs.length > 0) lines.push(`歌: ${songs.join("、")}`);
+  if (dances.length > 0) lines.push(`ダンス: ${dances.join("、")}`);
+  return (
+    `\n\n【うたえる歌・おどれるダンス（この端末に入っているものだけ）】\n` +
+    lines.join("\n") +
+    `\n・歌ってほしい/踊ってほしいと言われたら、perform_motion の query には必ずこの一覧の名前を“そのまま”入れる（勝手に作らない）。\n` +
+    `・相手の言い方が一覧の名前と少し違っても、明らかに同じものならその正式名を query にする。\n` +
+    `・一覧に無いものを求められたら、無いことを正直に伝え、この中から近いものをすすめる（かってに別の曲を指定しない）。おまかせしたい様子なら query 省略でよい。`
+  );
+}
+
 /** 名前を反映した system プロンプトを組み立てる。 */
 export function buildSystemPrompt(opts?: {
   ownerName?: string;
@@ -54,6 +72,7 @@ export function buildSystemPrompt(opts?: {
   contacts?: ContactInfo[];
   clientTime?: string;
   knowledge?: Knowledge;
+  catalog?: Catalog;
 }): string {
   const robotName = opts?.robotName && opts.robotName.trim() ? opts.robotName.trim() : "ロボホン";
   const ownerName = opts?.ownerName && opts.ownerName.trim() ? opts.ownerName.trim() : null;
@@ -84,6 +103,7 @@ export function buildSystemPrompt(opts?: {
     buildPersona(robotName) +
     buildContactsBlock(opts?.contacts) +
     buildKnowledgeBlock(opts?.knowledge) +
+    buildCatalogBlock(opts?.catalog) +
     timeBlock
   );
 }
@@ -131,9 +151,10 @@ export const TOOLS: Anthropic.Tool[] = [
     description:
       "ユーザが基本動作を求めたときに呼ぶ。歌って/うたって→kind=sing、踊って/ダンス→kind=dance、" +
       "歩いて・その他の体の動き（手を振る/おじぎ等）→kind=action、写真を撮って/撮影して→kind=photo。" +
-      "曲名・ダンス名・動作名の指定があれば query にその語を短い見出し語で入れる（例『となりのトトロ』『歩く』『おじぎ』）。" +
-      "指定が無ければ query は省略（おまかせ）。実行はロボホン本体が行い、このアプリは終了せず動作後に会話へ戻る。" +
-      "短い前置き（例『踊るね！』『写真撮るよ〜』）も返してよい。",
+      "歌・ダンスで曲名/ダンス名の指定があるときは、system の【うたえる歌・おどれるダンス】一覧にある名前を“そのまま”query に入れる（一覧に無い曲を勝手に指定しない。無ければ会話で正直に伝える）。" +
+      "その一覧が system に無いときは、曲/ダンス名の指定はできないので query は省略（おまかせ）でよい。" +
+      "action の動作名は query に短い見出し語（例『歩く』『おじぎ』）。指定が無ければ query は省略（おまかせ）。" +
+      "実行はロボホン本体が行い、このアプリは終了せず動作後に会話へ戻る。短い前置き（例『踊るね！』『写真撮るよ〜』）も返してよい。",
     input_schema: {
       type: "object",
       properties: {
@@ -176,6 +197,7 @@ export async function callClaude(
     contacts?: ContactInfo[];
     clientTime?: string;
     knowledge?: Knowledge;
+    catalog?: Catalog;
   },
 ): Promise<LlmResult> {
   const res = await getClient().messages.create({
