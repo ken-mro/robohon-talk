@@ -8,7 +8,7 @@ import type { Knowledge } from "./types.js";
 import { isValidIsoDate, sanitizeKnowledge } from "./types.js";
 
 // 抽出・統合の忠実さ重視で会話用（Haiku）より上位のモデルを使う。日次1回なのでコストは誤差。
-const DIGEST_MODEL = "claude-sonnet-4-6";
+const DIGEST_MODEL = "claude-sonnet-5";
 const MAX_TOKENS = 1500;
 /** recent の保持期間（日）。プロンプト側のルール5と一致させる。 */
 export const RECENT_TTL_DAYS = 21;
