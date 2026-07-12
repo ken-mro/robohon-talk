@@ -23,9 +23,13 @@ export type ChatRequest = {
 /** 端末に入っている歌・ダンスの名前一覧（perform_motion で実在タイトルを指定させるため）。 */
 export type Catalog = { songs?: string[]; dances?: string[] };
 
-/** カタログのサイズ上限（プロンプトへ毎ターン入るため抑える）。 */
+/**
+ * カタログの安全上限（コンテンツ量に合わせて調整する値ではなく、悪意あるクライアントからの
+ * 巨大データを弾く DoS 防御の“天井”）。正規の端末コンテンツ（歌+ダンスで百数十件）が
+ * 決して届かない十分高い値にして、コンテンツが増えても更新不要にする。
+ */
 export const CATALOG_LIMITS = {
-  maxItems: 60,
+  maxItems: 500,
   maxItemChars: 40,
 } as const;
 

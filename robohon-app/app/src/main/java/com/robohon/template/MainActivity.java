@@ -104,11 +104,13 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private static final long FILLER_REPEAT_GAP = 2500;
     /** LLMへ渡す履歴の上限（直近Nメッセージ＝約10往復）。表示・保存は全件で別管理。 */
     private static final int SEED_MESSAGES = 20;
-    /** サーバへ同梱する歌・ダンス名の各上限（純正コンテンツは通常これ未満）。 */
-    private static final int CATALOG_LIMIT = 60;
     /** 歌・ダンスの依頼らしき発話（このときだけカタログを同梱＝毎ターンのトークン消費を避ける）。 */
     private static final Pattern MUSIC_INTENT = Pattern.compile(
             "歌|うたっ|うたを|うたって|唄|踊|おどっ|おどり|ダンス|曲");
+    /** 歌の依頼らしき語（この語があれば歌一覧を同梱）。 */
+    private static final Pattern SONG_INTENT = Pattern.compile("歌|うたっ|うたを|うたって|唄|曲");
+    /** ダンスの依頼らしき語（この語があればダンス一覧を同梱）。 */
+    private static final Pattern DANCE_INTENT = Pattern.compile("踊|おどっ|おどり|ダンス");
 
     /** launch_app の論理名 → ロボホン純正アプリのパッケージ名。 */
     private static final Map<String, String> APP_PACKAGES = new HashMap<>();
@@ -490,10 +492,14 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                         mConsent.isNamesAllowed() ? mKnowledgeJson : maskKnowledge(mKnowledgeJson));
             }
             // 端末に入っている歌・ダンスの一覧を同梱（LLMが実在タイトルから正確に選べるように）。
-            // 毎ターンだとトークン消費が増えるため、歌・ダンスの依頼らしき発話のときだけ送る。
+            // 毎ターンだとトークン消費が増えるため、依頼らしき発話のとき、しかも該当する種別だけ送る。
             // 個人情報ではない純正コンテンツ名。取得前（起動直後）は空で送らない。
             if (userText != null && MUSIC_INTENT.matcher(userText).find()) {
-                JSONObject catalog = buildCatalogJson();
+                boolean wantSongs = SONG_INTENT.matcher(userText).find();
+                boolean wantDances = DANCE_INTENT.matcher(userText).find();
+                // どちらの語か判別できないとき（「メドレー」等）は両方送る。
+                if (!wantSongs && !wantDances) { wantSongs = true; wantDances = true; }
+                JSONObject catalog = buildCatalogJson(wantSongs, wantDances);
                 if (catalog.length() > 0) req.put("catalog", catalog);
             }
         } catch (Exception e) {
@@ -1152,25 +1158,29 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         return arr;
     }
 
-    /** 端末の歌・ダンス一覧を {songs:[...], dances:[...]} に整形（各上限あり。無ければ空）。 */
-    private JSONObject buildCatalogJson() {
+    /** 端末の歌・ダンス一覧を {songs:[...], dances:[...]} に整形（要求種別のみ。各上限あり。無ければ空）。 */
+    private JSONObject buildCatalogJson(boolean wantSongs, boolean wantDances) {
         JSONObject o = new JSONObject();
         if (mMotion == null) return o;
         try {
-            JSONArray songs = toJsonArray(mMotion.getSongNames(), CATALOG_LIMIT);
-            JSONArray dances = toJsonArray(mMotion.getDanceNames(), CATALOG_LIMIT);
-            if (songs.length() > 0) o.put("songs", songs);
-            if (dances.length() > 0) o.put("dances", dances);
+            // 端末の全曲/全ダンスを送る（getInfo は端末の純正コンテンツで有限＝上限は設けない）。
+            if (wantSongs) {
+                JSONArray songs = toJsonArray(mMotion.getSongNames());
+                if (songs.length() > 0) o.put("songs", songs);
+            }
+            if (wantDances) {
+                JSONArray dances = toJsonArray(mMotion.getDanceNames());
+                if (dances.length() > 0) o.put("dances", dances);
+            }
         } catch (Exception ignore) {
         }
         return o;
     }
 
-    private static JSONArray toJsonArray(java.util.List<String> items, int max) {
+    private static JSONArray toJsonArray(java.util.List<String> items) {
         JSONArray arr = new JSONArray();
         if (items == null) return arr;
-        for (int i = 0; i < items.size() && arr.length() < max; i++) {
-            String s = items.get(i);
+        for (String s : items) {
             if (s != null && !s.trim().isEmpty()) arr.put(s.trim());
         }
         return arr;
