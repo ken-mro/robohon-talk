@@ -16,12 +16,14 @@ export type ChatRequest = {
   clientTime?: string;
   /** 会話から蓄積したナレッジベース（端末保存）。ペルソナに「おぼえていること」として注入する。 */
   knowledge?: Knowledge;
-  /** 端末に入っている歌・ダンスの一覧（純正コンテンツ名）。LLMが実在タイトルから指定できるように渡す。 */
+  /** 端末に入っている歌・ダンス・アクションの一覧（純正コンテンツ名）。LLMが実在タイトルから指定できるように渡す。 */
   catalog?: Catalog;
+  /** 端末のバッテリー残量（0〜100 の整数%）。「充電どれくらい？」に答えるため。 */
+  battery?: number;
 };
 
-/** 端末に入っている歌・ダンスの名前一覧（perform_motion で実在タイトルを指定させるため）。 */
-export type Catalog = { songs?: string[]; dances?: string[] };
+/** 端末に入っている歌・ダンス・アクションの名前一覧（perform_motion で実在タイトルを指定させるため）。 */
+export type Catalog = { songs?: string[]; dances?: string[]; actions?: string[] };
 
 /**
  * カタログの安全上限（コンテンツ量に合わせて調整する値ではなく、悪意あるクライアントからの
@@ -48,11 +50,22 @@ export function sanitizeCatalog(raw: unknown): Catalog | undefined {
   };
   const songs = clean(c.songs);
   const dances = clean(c.dances);
-  if (songs.length === 0 && dances.length === 0) return undefined;
+  const actions = clean(c.actions);
+  if (songs.length === 0 && dances.length === 0 && actions.length === 0) return undefined;
   const out: Catalog = {};
   if (songs.length > 0) out.songs = songs;
   if (dances.length > 0) out.dances = dances;
+  if (actions.length > 0) out.actions = actions;
   return out;
+}
+
+/** 型不明の入力をバッテリー残量へ正規化する。0〜100 の数値のみ受け付け整数へ丸める。それ以外は undefined。 */
+export function sanitizeBattery(raw: unknown): number | undefined {
+  const n = typeof raw === "number" ? raw : NaN;
+  if (!Number.isFinite(n)) return undefined;
+  // 丸め前に範囲判定する（-0.5→"−0%"の採用や 100.4→101 棄却のような境界の非対称を避ける）。
+  if (n < 0 || n > 100) return undefined;
+  return Math.round(n);
 }
 
 /** 電話帳の登録者1人ぶん（呼び名と続柄）。 */
@@ -84,12 +97,16 @@ export function isValidIsoDate(s: unknown): s is string {
 }
 
 /**
- * KB項目の1文を無害化する。改行・タブ・制御文字を空白へ畳み、隅付き括弧【】も除去し、
- * コードポイント単位で長さを丸める。これらを残すと、システムプロンプト中に偽の
- * 「【最重要】」ブロックを注入できてしまうため必須（digest入力側の neutralize と対称）。
+ * クライアント由来テキスト1件を無害化する（KB項目・カタログ名・連絡先名で共用）。
+ * 改行・タブ・制御文字を空白へ畳み、隅付き括弧【】も除去し、コードポイント単位で長さを丸める。
+ * これらを残すと、システムプロンプト中に偽の「【最重要】」ブロックを注入できてしまうため必須
+ * （digest入力側の neutralize と対称）。
  */
-function cleanItem(s: string): string {
-  const collapsed = s
+export function cleanItem(s: string): string {
+  // 正規表現・Array.from を全文へ適用する前に長さで足切りする（数十MBの1件を送り
+  // Workers isolate のメモリ/CPU を食い潰す DoS の防止）。切断でサロゲートペアが
+  // 割れる可能性はあるが、最終長は後段の Array.from→slice が決めるため無害。
+  const collapsed = s.slice(0, KNOWLEDGE_LIMITS.maxItemChars * 8)
     // eslint-disable-next-line no-control-regex
     .replace(/[\u0000-\u001F\u007F]/g, " ")
     .replace(/[【】]/g, " ")

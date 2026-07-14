@@ -8,6 +8,7 @@ import android.content.Intent;
 import android.content.IntentFilter;
 import android.graphics.drawable.GradientDrawable;
 import android.media.AudioManager;
+import android.os.BatteryManager;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -491,17 +492,23 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                 req.put("knowledge",
                         mConsent.isNamesAllowed() ? mKnowledgeJson : maskKnowledge(mKnowledgeJson));
             }
-            // 端末に入っている歌・ダンスの一覧を同梱（LLMが実在タイトルから正確に選べるように）。
-            // 毎ターンだとトークン消費が増えるため、依頼らしき発話のとき、しかも該当する種別だけ送る。
+            // 端末に入っている歌・ダンス・アクションの一覧を同梱（LLMが実在タイトルから正確に選べるように）。
+            // 歌・ダンスは数が多い（百数十件）ため依頼らしき発話のとき該当種別だけ送る。
+            // アクションは少数で、依頼の言い回しが多様（立って/手を挙げて等）で正規表現で拾いきれないため毎ターン送る。
             // 個人情報ではない純正コンテンツ名。取得前（起動直後）は空で送らない。
+            boolean wantSongs = false;
+            boolean wantDances = false;
             if (userText != null && MUSIC_INTENT.matcher(userText).find()) {
-                boolean wantSongs = SONG_INTENT.matcher(userText).find();
-                boolean wantDances = DANCE_INTENT.matcher(userText).find();
+                wantSongs = SONG_INTENT.matcher(userText).find();
+                wantDances = DANCE_INTENT.matcher(userText).find();
                 // どちらの語か判別できないとき（「メドレー」等）は両方送る。
                 if (!wantSongs && !wantDances) { wantSongs = true; wantDances = true; }
-                JSONObject catalog = buildCatalogJson(wantSongs, wantDances);
-                if (catalog.length() > 0) req.put("catalog", catalog);
             }
+            JSONObject catalog = buildCatalogJson(wantSongs, wantDances);
+            if (catalog.length() > 0) req.put("catalog", catalog);
+            // バッテリー残量（%）を同梱（「充電どれくらい？」に答えられるように）。取得失敗時は送らない。
+            int battery = readBatteryPercent();
+            if (battery >= 0) req.put("battery", battery);
         } catch (Exception e) {
             Log.e(TAG, "json build error", e);
         }
@@ -1158,7 +1165,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         return arr;
     }
 
-    /** 端末の歌・ダンス一覧を {songs:[...], dances:[...]} に整形（要求種別のみ。各上限あり。無ければ空）。 */
+    /** 端末の歌・ダンス・アクション一覧を {songs:[...], dances:[...], actions:[...]} に整形（歌・ダンスは要求種別のみ。アクションは常時。無ければ空）。 */
     private JSONObject buildCatalogJson(boolean wantSongs, boolean wantDances) {
         JSONObject o = new JSONObject();
         if (mMotion == null) return o;
@@ -1172,9 +1179,30 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                 JSONArray dances = toJsonArray(mMotion.getDanceNames());
                 if (dances.length() > 0) o.put("dances", dances);
             }
+            // アクション名は少数かつ依頼の言い回しが多様なため常時同梱（LLMが正式名で指定できるように）。
+            JSONArray actions = toJsonArray(mMotion.getActionNames());
+            if (actions.length() > 0) o.put("actions", actions);
         } catch (Exception ignore) {
         }
         return o;
+    }
+
+    /** バッテリー残量（0〜100%）。取得できなければ -1。 */
+    private int readBatteryPercent() {
+        try {
+            // sticky broadcast はレシーバ登録不要で即値が取れる（API21 の実機で確実に動く方式）。
+            Intent i = registerReceiver(null, new IntentFilter(Intent.ACTION_BATTERY_CHANGED));
+            if (i == null) return -1;
+            int level = i.getIntExtra(BatteryManager.EXTRA_LEVEL, -1);
+            int scale = i.getIntExtra(BatteryManager.EXTRA_SCALE, -1);
+            if (level < 0 || scale <= 0) return -1;
+            // level > scale を返す電源HALが実在するため上限をクランプする
+            // （100超を送るとサーバ側で範囲外として黙って捨てられ、満充電付近で答えられなくなる）。
+            return Math.min(100, Math.round(level * 100f / scale));
+        } catch (Throwable t) {
+            Log.w(TAG, "battery read failed: " + t);
+            return -1;
+        }
     }
 
     private static JSONArray toJsonArray(java.util.List<String> items) {

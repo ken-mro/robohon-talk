@@ -83,6 +83,8 @@ public final class MotionController {
             }
             Log.v(TAG, "motion lists: songs=" + mSongs.size() + " dances=" + mDances.size()
                     + " actions=" + mActions.size());
+            // TODO: 実機での全アクション名の確認用（adb logcat -s MotionController:I で参照）。確認が済んだら削除する。
+            Log.i(TAG, "actions=" + mActions.values());
         }, "motion-getinfo").start();
     }
 
@@ -166,6 +168,11 @@ public final class MotionController {
         return names(mDances);
     }
 
+    /** 端末でできるアクション（立ち上がる・歩く等）の名前一覧。LLMが実在の名前で指定できるように渡す。 */
+    public List<String> getActionNames() {
+        return names(mActions);
+    }
+
     private static List<String> names(LinkedHashMap<Integer, String> map) {
         List<String> out = new ArrayList<>();
         if (map == null) return out;
@@ -175,11 +182,20 @@ public final class MotionController {
         return out;
     }
 
-    /** 名前一致で id を引く。query 空なら -1（＝おまかせ）。双方向 contains で緩く一致。 */
+    /**
+     * 名前一致で id を引く。query 空なら -1（＝おまかせ）。
+     * LLM には一覧の正式名を“そのまま”指定させるため、まず完全一致を全走査してから、
+     * 言い回し違いの保険として双方向 contains の緩い一致に落とす（先勝ちの部分一致だけだと、
+     * ある名前が別名の部分文字列のとき正式名指定でも別エントリに化けるため）。
+     */
     private static int findId(LinkedHashMap<Integer, String> map, String query) {
         if (query == null) return -1;
         String q = query.trim();
         if (q.isEmpty() || map == null || map.isEmpty()) return -1;
+        for (Map.Entry<Integer, String> e : map.entrySet()) {
+            String name = e.getValue();
+            if (name != null && name.trim().equals(q)) return e.getKey();
+        }
         for (Map.Entry<Integer, String> e : map.entrySet()) {
             String name = e.getValue();
             if (name == null) continue;
