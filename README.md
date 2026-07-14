@@ -15,6 +15,16 @@ robohon-intelligence/
 └── README.md
 ```
 
+## クローン後のセットアップ
+
+シャープ配布物（SDK・jar）や機密（.env, local.properties）は git 管理外のため、クローン直後はビルドできない。
+
+```powershell
+pwsh -File scripts/setup.ps1
+```
+
+で復元する（冪等）。`RoBoHoN_SDK_2_0_0.zip` だけは再配布禁止のため自動取得できない — RoBoHoN開発者サポートサイト（要開発者登録）から入手してリポジトリ直下に置いてから実行する。Claude Code に「セットアップして」と頼んでもよい（[CLAUDE.md](CLAUDE.md) に手順を記載）。
+
 ## 進捗
 - **Workstream 1（SDKナレッジベース＋Skill）**: 完了。`robohon-sdk` スキルでHVML/API/制約を参照可能。
 - **Workstream 2（環境構築・サンプル実機動作）**: PC側ビルド確立済み。`robohon-app` がCLIでビルド成功（APK生成）。実機(SR-S05BJ)での起動・発話確認が残ゲート → [docs/workstream2-device-run.md](docs/workstream2-device-run.md)。

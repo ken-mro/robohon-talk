@@ -11,10 +11,16 @@ usb_driver_SHARP_RoBoHoN_r4.1.zip
 # クローン後は SDK から jar/ へコピーすること（robohon-app/app/jar/README.md 参照）。
 robohon-app/app/jar/*.jar
 
+# --- ローカル専用メモ ---
+# 開発PC固有の事情（プロキシ・証明書・パス等）。共通事項は CLAUDE.md へ。
+CLAUDE.local.md
+
 # --- 機密 ---
 # Claude APIキー等。中継サーバの設定は実体をコミットしない。
 .env
 .env.*
+# 雛形はコミットする（README のセットアップ手順が参照）。
+!.env.example
 **/local.properties
 *.keystore
 *.jks
