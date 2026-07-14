@@ -83,8 +83,6 @@ public final class MotionController {
             }
             Log.v(TAG, "motion lists: songs=" + mSongs.size() + " dances=" + mDances.size()
                     + " actions=" + mActions.size());
-            // TODO: 実機での全アクション名の確認用（adb logcat -s MotionController:I で参照）。確認が済んだら削除する。
-            Log.i(TAG, "actions=" + mActions.values());
         }, "motion-getinfo").start();
     }
 
