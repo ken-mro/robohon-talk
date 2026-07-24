@@ -138,7 +138,7 @@ export function buildSystemBlocks(opts?: SystemPromptOpts): { static: string; dy
   const clientTime = opts?.clientTime && opts.clientTime.trim() ? opts.clientTime.trim() : null;
   const timeBlock = clientTime
     ? `\n\n【今の日時】今は ${clientTime}。時刻・日付・曜日を聞かれたら、これを基に自然に答える（「わからない」と言わない）。` +
-      `「今日は何の日？」と聞かれたら、この日付（月日）にちなんだ記念日・季節の行事・昔の有名な出来事を思い出して1つ楽しく教える（うろ覚えなら「〜なんだって」と伝聞にする）。これは過去の知識で答えられる質問で、調べられない“今のこと”ではないので、「わからない」ではぐらかさない。どうしても思い出せないときだけ正直に言い、代わりに季節の話題をふる。`
+      `「今日は何の日？」と聞かれたら、この日付（月日）にちなんだ記念日・季節の行事・昔の有名な出来事を思い出して1つ楽しく教える（うろ覚えなら「〜なんだって」と伝聞にする）。これは過去の知識で答えられる質問なので、web_search で調べずにすぐ答える。「わからない」ではぐらかさない。どうしても思い出せないときだけ正直に言い、代わりに季節の話題をふる。`
     : "";
   // 呼び出し経路では core.ts の sanitizeBattery 済みだが、他経路からの直呼びに備えて
   // ここでも検証する（不正値は「NaN%」等でプロンプトに素通りさせない）。
@@ -222,7 +222,19 @@ export const LAUNCH_APPS = [
   "days",
 ] as const;
 
-export const TOOLS: Anthropic.Tool[] = [
+// カスタムツール＋サーバーツール（web_search）が混在するため ToolUnion 型にする
+// （Anthropic.Tool はカスタムツール専用の型で、web_search を入れると型エラーになる）。
+export const TOOLS: Anthropic.Messages.ToolUnion[] = [
+  {
+    // Anthropic サーバーサイドの Web 検索。検索はAPI側で完結し、結果は応答に織り込まれて返る
+    // （アプリ側の変更は不要）。Haiku 4.5 は新版 web_search_20260209 非対応のため 20250305 を使う。
+    // 音声会話の遅延とコスト（$10/1000検索）を抑えるため max_uses は小さくする。
+    // 注意: tools の変更はプロンプトキャッシュの前置きを変えるため、デプロイ直後の1回だけ
+    // キャッシュが書き直される（以後は安定）。
+    type: "web_search_20250305",
+    name: "web_search",
+    max_uses: 3,
+  },
   {
     name: "launch_app",
     description:
@@ -300,29 +312,46 @@ function getClient(): Anthropic {
   return client;
 }
 
-/** Claude を1回呼び、テキストと（あれば）tool_use を正規化して返す。 */
+// web_search 実行中にAPIのサーバー側ループが上限に達すると stop_reason=pause_turn で
+// 中断されて返る。その場合は assistant 応答をそのまま積んで再送すると続きから再開される
+// （余計な user メッセージを足さないこと）。無限ループ防止の再送上限。
+const MAX_CONTINUATIONS = 3;
+
+/** Claude を1回（pause_turn 時は継続込みで）呼び、テキストと（あれば）tool_use を正規化して返す。 */
 export async function callClaude(
   messages: ChatMessage[],
   names?: SystemPromptOpts,
 ): Promise<LlmResult> {
-  const res = await getClient().messages.create({
-    model: MODEL,
-    max_tokens: MAX_TOKENS,
-    system: buildSystemParam(names),
-    tools: TOOLS,
-    messages: messages as Anthropic.MessageParam[],
-  });
+  const system = buildSystemParam(names);
+  let msgs = messages as Anthropic.MessageParam[];
+  // pause_turn で分割された全セグメントの content を順に集める（途中セグメントにも
+  // 発話テキストが含まれうるため、最終応答だけ見ると前半の文が落ちる）。
+  const blocks: Anthropic.ContentBlock[] = [];
+  for (let attempt = 0; ; attempt++) {
+    const res = await getClient().messages.create({
+      model: MODEL,
+      max_tokens: MAX_TOKENS,
+      system,
+      tools: TOOLS,
+      messages: msgs,
+    });
 
-  // キャッシュ効果の観測用（wrangler tail / ローカルstdout）。read>0 ならヒット。
-  console.log(
-    `[usage] in=${res.usage.input_tokens} out=${res.usage.output_tokens}` +
-      ` cache_write=${res.usage.cache_creation_input_tokens ?? 0}` +
-      ` cache_read=${res.usage.cache_read_input_tokens ?? 0}`,
-  );
+    // キャッシュ効果の観測用（wrangler tail / ローカルstdout）。read>0 ならヒット。
+    console.log(
+      `[usage] in=${res.usage.input_tokens} out=${res.usage.output_tokens}` +
+        ` cache_write=${res.usage.cache_creation_input_tokens ?? 0}` +
+        ` cache_read=${res.usage.cache_read_input_tokens ?? 0}` +
+        ` stop=${res.stop_reason}`,
+    );
+
+    blocks.push(...res.content);
+    if (res.stop_reason !== "pause_turn" || attempt >= MAX_CONTINUATIONS) break;
+    msgs = [...msgs, { role: "assistant", content: res.content }];
+  }
 
   let text = "";
   let toolUse: LlmResult["toolUse"] = null;
-  for (const block of res.content) {
+  for (const block of blocks) {
     if (block.type === "text") text += block.text;
     else if (block.type === "tool_use")
       toolUse = { name: block.name, input: (block.input ?? {}) as Record<string, unknown> };
