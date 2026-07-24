@@ -86,14 +86,26 @@ export async function handleChat(body: ChatRequest): Promise<ChatResponse> {
     history.push({ role: "assistant", content: llm.text });
     histories.set(body.sessionId, history.slice(-MAX_TURNS * 2));
 
-    const action = toAction(llm.toolUse);
+    let action = toAction(llm.toolUse);
+    // モデルは「だれにうたう？」と聞き返しながら、同時に仮の宛名（「君」「ぼく」「お友達」等）で
+    // sing_birthday を呼んでしまうことがある。そのまま歌うと、聞いた直後に無関係な名前で歌い出す。
+    // 聞き返している最中は歌わせない（宛名の仮置きは種類が多く列挙できないため、問いかけ側で判定する）。
+    if (action?.type === "sing_birthday" && /(だれ|誰)/.test(llm.text)) {
+      console.log(`[chat] drop sing_birthday (asking who): name=${action.name}`);
+      action = null;
+    }
     let utterances = splitUtterances(llm.text);
     // 日記作成は本文を読み上げる。前置きに既に本文が含まれていれば二重読みを避ける。
     if (action?.type === "write_diary" && !llm.text.includes(action.text)) {
       utterances = [...utterances, ...splitUtterances(action.text)];
     }
     if (utterances.length === 0 && action) {
-      utterances = action.type === "write_diary" ? ["日記、書いたよ！"] : ["わかった、やってみるね！"];
+      utterances =
+        action.type === "write_diary"
+          ? ["日記、書いたよ！"]
+          : action.type === "sing_birthday"
+            ? ["うたうね！"]
+            : ["わかった、やってみるね！"];
     }
 
     const actionDetail = !action
@@ -102,7 +114,9 @@ export async function handleChat(body: ChatRequest): Promise<ChatResponse> {
         ? `launch_app:${action.app}`
         : action.type === "perform_motion"
           ? `perform_motion:${action.kind}${action.query ? "/" + action.query : ""}`
-          : "write_diary";
+          : action.type === "sing_birthday"
+            ? `sing_birthday:${action.name}`
+            : "write_diary";
     console.log(
       `[chat] session=${body.sessionId} in="${body.text}" -> utt=${utterances.length} action=${actionDetail}`,
     );

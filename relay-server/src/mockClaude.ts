@@ -14,6 +14,12 @@ export async function callClaudeMock(messages: ChatMessage[]): Promise<LlmResult
   if (/アルバム|見せて/.test(text)) {
     return { text: "アルバムを開くね！", toolUse: { name: "launch_app", input: { app: "album" } } };
   }
+  // 「◯◯に誕生日の歌」→ 名前入りバースデー。名前が取れなければ聞き返す（純正の「誰に?」相当）。
+  if (/誕生日|たんじょうび|バースデー/.test(text)) {
+    const m = text.match(/([^\s、。]{1,20}?)(?:に|へ)(?=.*(?:誕生日|たんじょうび|バースデー))/);
+    if (m) return { text: "うたうね！", toolUse: { name: "sing_birthday", input: { name: m[1] } } };
+    return { text: "だれにうたう？", toolUse: null };
+  }
   if (/おわり|終了|バイバイ|さようなら/.test(text)) {
     return { text: "またね！話せて楽しかったよ。", toolUse: null };
   }

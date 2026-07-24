@@ -138,11 +138,40 @@ export function sanitizeKnowledge(raw: unknown): Knowledge | undefined {
   return { profile, recent };
 }
 
-/** アプリ側が解釈する連携指示。アプリ起動 / 日記書き込み / 基本動作（歌・踊り・アクション）。 */
+/** アプリ側が解釈する連携指示。アプリ起動 / 日記書き込み / 基本動作（歌・踊り・アクション）/ 名前入りバースデー。 */
 export type Action =
   | { type: "launch_app"; app: string }
   | { type: "write_diary"; text: string }
-  | { type: "perform_motion"; kind: string; query?: string };
+  | { type: "perform_motion"; kind: string; query?: string }
+  // 名前入りハッピーバースデー。アプリが端末内蔵のメロディ音源を前半→(名前をTTS発話)→後半と鳴らす。
+  // 純正曲(SongUtil)は宛名を差し替えられずオーナー固定になるため、誕生日の歌はこちらを使う。
+  | { type: "sing_birthday"; name: string };
+
+/** バースデーソングに差し込む宛名の上限（歌の隙間で読む短い呼び名を想定）。 */
+export const BIRTHDAY_NAME_MAX_CHARS = 20;
+
+/**
+ * 宛名として無意味な代名詞・プレースホルダ。モデルが「だれにうたう？」と聞き返しつつ、
+ * 同時に仮の宛名でツールを呼んでしまうこと（＝聞いた直後に「君」と歌い出す）を防ぐ。
+ * これらが来たら宛名不明とみなし、歌わせずに聞き返しの発話だけを返す。
+ */
+const BIRTHDAY_NAME_PLACEHOLDERS = new Set([
+  "君", "きみ", "あなた", "貴方", "あなたさま", "みんな", "皆", "みなさん", "皆さん",
+  "誰", "だれ", "その人", "この人", "本人",
+]);
+
+/**
+ * 型不明の入力を、歌に差し込む宛名へ正規化する。
+ * cleanItem で無害化（改行・制御文字・隅付き括弧の除去）したうえで長さを丸める。
+ * 宛名はそのまま TTS で読み上げられるため、長文や制御文字を通さない。
+ * 空、または代名詞などのプレースホルダなら undefined（＝歌わない）。
+ */
+export function sanitizeBirthdayName(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const name = Array.from(cleanItem(raw)).slice(0, BIRTHDAY_NAME_MAX_CHARS).join("");
+  if (name.length === 0 || BIRTHDAY_NAME_PLACEHOLDERS.has(name)) return undefined;
+  return name;
+}
 
 export type ChatResponse = {
   utterances: string[]; // ~150字に分割した発話片（順次発話する）

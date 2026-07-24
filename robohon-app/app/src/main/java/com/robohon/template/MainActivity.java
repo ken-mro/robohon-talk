@@ -152,6 +152,23 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private String mPendingLaunchApp = null;
     /** 全発話後に実行する基本動作 [kind, query]。無ければnull。実行中は会話を止めて完了待ち。 */
     private String[] mPendingMotion = null;
+    /** 全発話後に歌う「名前入りバースデー」の宛名。無ければnull。 */
+    private String mPendingBirthdayName = null;
+    /** 宛名を言い終えてから後半メロディを鳴らすまでの間。純正の「〜ディア◯◯」後の間合いに寄せる調整値。
+     *  短いと名前と締めが詰まって聞こえ、長すぎると曲が途切れる。実機の聞こえ方で調整すること。 */
+    private static final long BIRTHDAY_GAP_AFTER_NAME_MS = 1200;
+    /** 歌唱中の宛名（前半メロディ完了後にこの名前をTTS発話する）。 */
+    private String mBirthdaySingingName = null;
+    /** 宛名の発話が終わったら後半メロディを鳴らす、を示すフラグ。 */
+    private boolean mBirthdayAwaitingPart2 = false;
+    /** 開発用の「歌だけ実行」モード。歌い終わっても待受へ進まない（音声認識の回数を消費しない）。 */
+    private boolean mDebugSingOnly = false;
+    /** 宛名の発話が音声UIに棄却されたときの再試行。棄却のまま進むと名前を飛ばして締めだけ歌ってしまう。 */
+    private static final int BIRTHDAY_NAME_MAX_ATTEMPTS = 3;
+    private static final long BIRTHDAY_NAME_RETRY_MS = 700;
+    private int mBirthdayNameAttempts = 0;
+    /** 実際に使う「宛名の後の間」。既定は {@link #BIRTHDAY_GAP_AFTER_NAME_MS}、開発時のみ引数で上書きできる。 */
+    private long mBirthdayGapMs = BIRTHDAY_GAP_AFTER_NAME_MS;
     /** 初回ターンはサーバ履歴をreset。 */
     private boolean mFirstTurn = true;
     /** サーバ応答待ち / 発話中 / 全発話後に終了する、のフラグ。 */
@@ -204,6 +221,8 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
     private ConversationStore mStore;
     private DiaryStore mDiary;
     private MotionController mMotion;
+    /** 名前入りバースデー（端末内蔵メロディを前半→宛名TTS→後半と鳴らす）。 */
+    private BirthdaySong mBirthday;
     /** ナレッジベース（おぼえていること）の端末保存。/chat に同梱し /digest で日次更新。 */
     private KnowledgeStore mKnowledge;
     /** 送信用に保持する現在のKB（onResume でロード。UIスレッドのみで読み書き）。 */
@@ -273,6 +292,41 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         mKnowledge = new KnowledgeStore(this);
         // 基本動作（歌/踊り/アクション）の実行・結果受信。
         mMotion = new MotionController(this, this::onMotionDone);
+        // 名前入りバースデー。前半メロディ終了→宛名を発話、後半メロディ終了→会話へ復帰。
+        mBirthday = new BirthdaySong(new BirthdaySong.Listener() {
+            @Override
+            public void onPart1Finished() {
+                if (isFinishing()) return;
+                // 宛名は発話のみ（履歴には歌い終わりに1件だけ残す）。発話完了後に後半へ進む。
+                mBirthdayAwaitingPart2 = true;
+                mBirthdayNameAttempts = 0;
+                enqueueSpeechOnly(mBirthdaySingingName);
+                if (!mSpeaking) speakNextOrFinish();
+            }
+
+            @Override
+            public void onSongFinished(boolean ok) {
+                if (isFinishing()) return;
+                mBirthdayAwaitingPart2 = false;
+                String who = mBirthdaySingingName;
+                mBirthdaySingingName = null;
+                if (!ok) Log.w(TAG, "birthday song failed");
+                if (mDebugSingOnly) {
+                    // 開発用の直接実行。待受へ進まない（音声認識の回数を消費しないため）。
+                    Log.v(TAG, "debug sing finished (ok=" + ok + "), staying idle");
+                    return;
+                }
+                if (ok) {
+                    // 何を歌ったかを履歴に残す（次ターンの文脈になる）。発話はしない。
+                    addMessage(ConversationStore.ROLE_ROBOT,
+                            (who != null ? who : "みんな") + "に「ハッピーバースデー」をうたったよ！");
+                    startListen();
+                } else {
+                    enqueueRobotExclusive("ごめんね、うまく歌えなかったみたい。");
+                    speakNextOrFinish();
+                }
+            }
+        });
         mMessageContainer = (LinearLayout) findViewById(R.id.messageContainer);
         mScrollView = (ScrollView) findViewById(R.id.scrollView);
         mEmptyView = (TextView) findViewById(R.id.emptyView);
@@ -304,6 +358,12 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         mFinishAfterSpeak = false;
         mPendingLaunchApp = null;
         mPendingMotion = null;
+        mPendingBirthdayName = null;
+        mBirthdaySingingName = null;
+        mBirthdayAwaitingPart2 = false;
+        mBirthdayNameAttempts = 0;
+        mDebugSingOnly = false;
+        mBirthdayGapMs = BIRTHDAY_GAP_AFTER_NAME_MS;
         mAwaitingConsent = false;
         mConsentAckPending = false;
         if (mHandler != null) mHandler.removeCallbacksAndMessages(null);
@@ -338,6 +398,9 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         // 同意ゲートを通過した後に呼ぶ（同意選択が済むまで外部送信を始めない）。
         maybeRunDigest();
 
+        // 開発用: 歌だけを直接実行する経路（あいさつも待受もしない）。間合い調整のために使う。
+        if (BuildConfig.DEBUG && maybeStartDebugBirthday()) return;
+
         // 起動あいさつは HVML greet（"はーい！なにー？"）で発話する。名前は名乗らない。
         // 画面表示用のテキストは発話とは別経路（履歴ファイルには保存しない）。
         addMessageView(ConversationStore.ROLE_ROBOT, "はーい！なにー？", System.currentTimeMillis());
@@ -351,6 +414,10 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         if (mHandler != null) mHandler.removeCallbacksAndMessages(null);
         mWaitingForRelay = false;
         mSpeaking = false;
+        // 歌の途中で前面を離れたらメロディを止める（発話停止と足並みを揃える）
+        if (mBirthday != null) mBirthday.stop();
+        mBirthdayAwaitingPart2 = false;
+        mBirthdaySingingName = null;
         // 同意ダイアログが出たまま終了するとウィンドウリークになるため閉じる
         if (mConsentDialog != null) {
             if (mConsentDialog.isShowing()) mConsentDialog.dismiss();
@@ -369,6 +436,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         Log.v(TAG, "onDestroy()");
         this.unregisterReceiver(mHomeEventReceiver);
         if (mMotion != null) mMotion.release();
+        if (mBirthday != null) mBirthday.stop();
         mVUIManager = null;
         mVUIListener = null;
     }
@@ -415,10 +483,23 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                 mHandler.post(() -> {
                     if (isFinishing()) return;
                     Log.w(TAG, "speech cancelled/rejected: event=" + event);
-                    if (mSpeaking) {
-                        mSpeaking = false;
-                        speakNextOrFinish();
+                    if (!mSpeaking) return;
+                    mSpeaking = false;
+                    // 歌の宛名発話が棄却されたときは、そのまま進むと名前を飛ばして締めだけ歌ってしまう。
+                    // 少し待って歌い直す（音声UIが他の発話で塞がっている一時的な棄却を吸収する）。
+                    if (mBirthdayAwaitingPart2 && mBirthdaySingingName != null
+                            && mBirthdayNameAttempts < BIRTHDAY_NAME_MAX_ATTEMPTS) {
+                        mBirthdayNameAttempts++;
+                        Log.w(TAG, "birthday name speech rejected, retry " + mBirthdayNameAttempts);
+                        mUtteranceQueue.clear();
+                        mHandler.postDelayed(() -> {
+                            if (isFinishing() || mBirthdaySingingName == null) return;
+                            enqueueSpeechOnly(mBirthdaySingingName);
+                            if (!mSpeaking) speakNextOrFinish();
+                        }, BIRTHDAY_NAME_RETRY_MS);
+                        return;
                     }
+                    speakNextOrFinish();
                 });
                 break;
             }
@@ -561,6 +642,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         mUtteranceQueue.clear();
         mPendingLaunchApp = null;
         mPendingMotion = null;
+        mPendingBirthdayName = null;
         boolean done = false;
         try {
             JSONObject obj = new JSONObject(json);
@@ -585,6 +667,10 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                     String kind = action.optString("kind", "");
                     String query = action.optString("query", "");
                     if (!kind.isEmpty()) mPendingMotion = new String[]{kind, query};
+                } else if ("sing_birthday".equals(type)) {
+                    // 名前入りバースデー。前置き発話の後、メロディ前半→宛名→後半の順で鳴らす。
+                    String who = action.optString("name", "").trim();
+                    if (!who.isEmpty()) mPendingBirthdayName = who;
                 }
             }
         } catch (Exception e) {
@@ -619,6 +705,31 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         // キューが空
         if (mAwaitingConsent) return;          // 初回の外部送信選択待ち：待受(音声認識)を開始しない
         if (mWaitingForRelay) return;          // サーバ応答待ち：待機（フィラーは別途）
+        if (mBirthdayAwaitingPart2) {          // 宛名の発話が終わった → 少し間をおいて後半メロディへ
+            mBirthdayAwaitingPart2 = false;
+            mHandler.postDelayed(() -> {
+                if (isFinishing() || mBirthday == null || mBirthdaySingingName == null) return;
+                mBirthday.playPart2();         // 完了は onSongFinished
+            }, mBirthdayGapMs);
+            return;
+        }
+        if (mBirthdaySingingName != null) {    // 歌の進行中（メロディ再生中／後半待ちの間）。
+            return;                            // 待受は始めない。進行は BirthdaySong のコールバックが駆動する。
+        }
+        if (mPendingBirthdayName != null) {    // 前置き発話の後に歌い始める。終了せず完了待ち。
+            String who = mPendingBirthdayName;
+            mPendingBirthdayName = null;
+            if (mBirthday != null && BirthdaySong.isAvailable()) {
+                mBirthdaySingingName = who;
+                mBirthday.playPart1();         // 完了は onPart1Finished → 宛名発話 → 後半
+                return;
+            }
+            // メロディ音源が無い端末では歌わず、言葉でお祝いする。
+            Log.w(TAG, "birthday melody unavailable, falling back to speech");
+            enqueueRobotExclusive(who + "、おたんじょうびおめでとう！");
+            speakNextOrFinish();
+            return;
+        }
         if (mPendingLaunchApp != null) {       // アプリ起動を終了より優先（→ onPauseで本アプリ終了）
             String app = mPendingLaunchApp;
             mPendingLaunchApp = null;
@@ -644,6 +755,35 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             mHandler.removeCallbacks(mConsentWatchdog);
         }
         startListen();
+    }
+
+    /**
+     * 開発用の直接実行。インテントの {@code debug_sing_birthday} に宛名があれば、あいさつも待受もせず
+     * 名前入りバースデーだけを鳴らす。クラウド音声認識（月間上限あり）とLLM呼び出しを消費せずに
+     * メロディと宛名発話の間合いを詰めるための経路。デバッグビルドでのみ呼ばれる。
+     *
+     * <pre>adb shell am start -n com.robohon.template/.MainActivity --es debug_sing_birthday たろう</pre>
+     *
+     * @return 歌を開始したら true（通常のあいさつ→待受へは進まない）
+     */
+    private boolean maybeStartDebugBirthday() {
+        Intent intent = getIntent();
+        String who = (intent != null) ? intent.getStringExtra("debug_sing_birthday") : null;
+        if (who == null || who.trim().isEmpty()) return false;
+        // 取り出したら消す（再開のたびに歌い直さないように）
+        intent.removeExtra("debug_sing_birthday");
+        setIntent(intent);
+        mDebugSingOnly = true;
+        mPendingBirthdayName = who.trim();
+        // 間合いの試行用に、宛名の後の間をその場で上書きできる（--ei debug_gap_ms 700）。
+        int gap = intent.getIntExtra("debug_gap_ms", -1);
+        intent.removeExtra("debug_gap_ms");
+        mBirthdayGapMs = (gap >= 0) ? gap : BIRTHDAY_GAP_AFTER_NAME_MS;
+        Log.v(TAG, "debug: sing birthday for " + mPendingBirthdayName + " gapMs=" + mBirthdayGapMs);
+        addMessageView(ConversationStore.ROLE_ROBOT,
+                "（デバッグ）" + mPendingBirthdayName + " にバースデーを歌う", System.currentTimeMillis());
+        speakNextOrFinish();
+        return true;
     }
 
     /** 待受を開始する。失敗時は一度だけ遅延リトライ（それでも失敗ならログのみ）。 */

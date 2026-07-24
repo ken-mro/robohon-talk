@@ -1,4 +1,5 @@
 import { LAUNCH_APPS } from "./claude.js";
+import { sanitizeBirthdayName } from "./types.js";
 import type { Action, LlmResult } from "./types.js";
 
 /** Claude の tool_use を、アプリ側が解釈する action に変換する。未知ツール/未知アプリは null。 */
@@ -12,6 +13,11 @@ export function toAction(toolUse: LlmResult["toolUse"]): Action | null {
   if (toolUse.name === "write_diary") {
     const text = String(toolUse.input.text ?? "").trim();
     if (text) return { type: "write_diary", text };
+  }
+  if (toolUse.name === "sing_birthday") {
+    // 宛名は無害化＋長さ制限。空（サニタイズで全滅含む）なら歌えないので null＝無効ツール扱い。
+    const name = sanitizeBirthdayName(toolUse.input.name);
+    if (name) return { type: "sing_birthday", name };
   }
   if (toolUse.name === "perform_motion") {
     const kind = String(toolUse.input.kind ?? "").trim();
