@@ -19,15 +19,17 @@ function buildPersona(robotName: string): string {
 /** 電話帳の登録者一覧を、ペルソナに足す説明文へ整形（空なら空文字）。 */
 function buildContactsBlock(contacts?: ContactInfo[]): string {
   if (!contacts || contacts.length === 0) return "";
-  // 名前・続柄もクライアント由来テキストなので cleanItem で無害化する
+  // 名前・続柄・誕生日もクライアント由来テキストなので cleanItem で無害化する
   // （改行＋【】で偽セクションをキャッシュされる静的部に注入されるのを防ぐ。catalog/KB と同水準）。
   const list = contacts
     .slice(0, 20)
     .map((c) => {
       const name = cleanItem(String(c.name ?? ""));
-      if (!name) return ""; // 名前が空（サニタイズで全滅含む）の項目は続柄だけ残さず除外
+      if (!name) return ""; // 名前が空（サニタイズで全滅含む）の項目は付帯情報だけ残さず除外
       const relation = c.relation ? cleanItem(String(c.relation)) : "";
-      return relation ? `${name}（${relation}）` : name;
+      const birthday = c.birthday ? cleanItem(String(c.birthday)) : "";
+      const notes = [relation, birthday ? `誕生日${birthday}` : ""].filter((s) => s.length > 0);
+      return notes.length > 0 ? `${name}（${notes.join("、")}）` : name;
     })
     .filter((s) => s.length > 0)
     .join("、");
@@ -35,7 +37,8 @@ function buildContactsBlock(contacts?: ContactInfo[]): string {
   return (
     `\n\n【知っている人（電話帳の登録者）】\n` +
     `あなたの周りには次の人たちがいる: ${list}。\n` +
-    `会話でこの名前が出たら誰のことか分かっているものとして自然に話す。ただし今の話し相手がこの中の誰か（またはオーナー本人か）は分からないので、決めつけて名前で呼ばない。`
+    `会話でこの名前が出たら誰のことか分かっているものとして自然に話す。ただし今の話し相手がこの中の誰か（またはオーナー本人か）は分からないので、決めつけて名前で呼ばない。` +
+    `誕生日が書いてある人については、聞かれたら答えてよいし、その日が近い・当日の話題になったら自然にお祝いにつなげてよい。`
   );
 }
 

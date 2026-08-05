@@ -1289,7 +1289,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         speakNextOrFinish();
     }
 
-    /** 電話帳の登録者を {name, relation} のJSON配列へ。 */
+    /** 電話帳の登録者を {name, relation, birthday} のJSON配列へ。 */
     private JSONArray buildContactsJson() {
         JSONArray arr = new JSONArray();
         if (mContacts == null) return arr;
@@ -1298,6 +1298,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
                 JSONObject o = new JSONObject();
                 o.put("name", c.name);
                 if (c.relation != null) o.put("relation", c.relation);
+                if (c.birthday != null) o.put("birthday", c.birthday);
                 arr.put(o);
             }
         } catch (Exception ignore) {

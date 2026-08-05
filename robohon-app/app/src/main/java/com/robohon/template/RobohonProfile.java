@@ -29,16 +29,18 @@ public final class RobohonProfile {
 
     private RobohonProfile() {}
 
-    /** 電話帳の登録者1人ぶん（呼び名と続柄）。 */
+    /** 電話帳の登録者1人ぶん（呼び名・続柄・誕生日）。 */
     public static final class Contact {
         public final int id;
         public final String name;
         public final String relation; // 無ければ null
+        public final String birthday; // 「1990年5月3日」または「5月3日」。未登録なら null
 
-        Contact(int id, String name, String relation) {
+        Contact(int id, String name, String relation, String birthday) {
             this.id = id;
             this.name = name;
             this.relation = relation;
+            this.birthday = birthday;
         }
     }
 
@@ -99,7 +101,9 @@ public final class RobohonProfile {
                     if (d == null) continue;
                     String name = displayName(d.getNickname(), d.getLastname(), d.getFirstname());
                     if (name.isEmpty()) continue;
-                    out.add(new Contact(id, name, emptyToNull(d.getRelations())));
+                    String birthday = formatBirthday(
+                            d.getBirthday_year(), d.getBirthday_month(), d.getBirthday_day());
+                    out.add(new Contact(id, name, emptyToNull(d.getRelations()), birthday));
                 } catch (Throwable t) {
                     // 1件失敗してもスキップして続行
                 }
@@ -138,6 +142,16 @@ public final class RobohonProfile {
         } catch (Throwable t) {
             Log.w(TAG, "getContactID(" + key + ") failed: " + t);
         }
+    }
+
+    /**
+     * 誕生日を表示文字列にする。月日が揃っていなければ null（未登録扱い）。
+     * 年は任意登録のため、妥当な範囲のときだけ付ける。
+     */
+    private static String formatBirthday(int year, int month, int day) {
+        if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+        String md = month + "月" + day + "日";
+        return (year >= 1900 && year <= 2100) ? year + "年" + md : md;
     }
 
     /** 呼び名の優先順位：ニックネーム → 姓+さん → 名+さん。すべて空なら ""。 */

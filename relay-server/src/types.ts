@@ -68,8 +68,8 @@ export function sanitizeBattery(raw: unknown): number | undefined {
   return Math.round(n);
 }
 
-/** 電話帳の登録者1人ぶん（呼び名と続柄）。 */
-export type ContactInfo = { name: string; relation?: string };
+/** 電話帳の登録者1人ぶん（呼び名・続柄・誕生日）。birthday は「1990年5月3日」「5月3日」等の整形済み文字列。 */
+export type ContactInfo = { name: string; relation?: string; birthday?: string };
 
 /**
  * 会話から蓄積したナレッジベース。正データは端末側に保存し、毎リクエスト同梱する（サーバはステートレス）。
