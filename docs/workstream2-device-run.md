@@ -1,9 +1,9 @@
-# Workstream 2 — 実機(SR-S05BJ)でサンプルを動かす手順
+# Workstream 2 — 実機(SR06M)でサンプルを動かす手順
 
-対象機: **SR-S05BJ**（公式仕様グループ SR-06M／SR-S05BJ／SR-S06BJ／SR-S07BJ。CPU Snapdragon 430・**サーボ13個＝二足歩行モデル**・Wi-Fi a/b/g/n(2.4/5GHz)/ac）。SDK同梱ドキュメントの機種一覧（〜SR05M, 2019年）より新しい型番だが同系のvoiceuiフレームワークと見られ、SDK動作は本ゲートで確定する。本リポジトリの `robohon-app/`（Templateを現行ツールに近代化した音声UIアプリ）をインストールし「起動ワード→発話」が通ることを確認する。
+対象機: **SR06M**（公式仕様グループ SR-06M／SR-S05BJ／SR-S06BJ／SR-S07BJ。CPU Snapdragon 430・**サーボ13個＝二足歩行モデル**・3G/LTE・Wi-Fi a/b/g/n(2.4/5GHz)/ac）。SDK同梱ドキュメントの機種一覧（〜SR05M, 2019年）より新しい型番だが同系のvoiceuiフレームワークと見られ、SDK動作は本ゲートで確定する。本リポジトリの `robohon-app/`（Templateを現行ツールに近代化した音声UIアプリ）をインストールし「起動ワード→発話」が通ることを確認する。
 
 > 出典: 公式仕様 https://jp.sharp/support/robohon/doc/web_mn/sr06m_srs05bj/09-08.html ／ 手順はスキル `robohon-sdk` の develop-start-guide.md（3.1.4 / 3.2.1 / 3.2.2 / 4.1）。
-> 注: 当初「lite/7サーボ/歩行不可」と記載していたのは誤り（別機種SR-05M-Yとの取り違え）。SR-S05BJは13サーボで二足歩行可能。
+> 注: 当初「lite/7サーボ/歩行不可」と記載していたのは誤り（別機種SR-05M-Yとの取り違え）。SR06M系は13サーボで二足歩行可能。
 
 ## 前提（PC側・確認済み）
 - Android Studio 導入済み、Android SDK（platform-tools/adb, platform android-34, build-tools 34）あり。
@@ -11,7 +11,7 @@
 - 社内プロキシのTLS傍受があるため、**CLIビルドはWindowsルート証明書から作った信頼ストアを使用**（Android Studio経由なら通常そのまま通る）。
 
 ## A. ロボホン本体の準備（ユーザ操作・要実機）
-SR-S05BJ の背面LCDで操作します。
+SR06M の背面LCDで操作します。
 
 1. **ソフト更新**: 設定 →「端末情報」→「ソフトウェア更新」で最新へ（ビルド番号 03.01.00 以降が前提）。
 2. **開発者向けオプションを表示**: 設定 →「端末情報」→「ビルド番号」を**7回タップ**。
@@ -19,10 +19,10 @@ SR-S05BJ の背面LCDで操作します。
 4. 「**USBデバッグ**」を **ON**（確認は「OK」）。
 5. 「**スリープモードにしない**」も **ON**（開発中の自動スリープ防止）。
 6. **マナースイッチをOFF**（マナーモードだと発話・モーションが出ない）。
-7. **Wi-Fi接続**を確立（SR-S05BJはWi-Fi専用。後のクラウド機能/LLM中継に必須）。
+7. **Wi-Fi接続**を確立（SR06Mは3G/LTE対応だがSIM無しで運用しているためWi-Fiが必須。後のクラウド機能/LLM中継にも必要）。
 
 ## B. PCと接続（ユーザ操作＋PC）
-8. **microUSBケーブル**でロボホンとPCを接続（SR-S05BJのmicroUSB端子は側面）。
+8. **microUSBケーブル**でロボホンとPCを接続（SR06MのmicroUSB端子は側面）。
 9. 本体に「**USBデバッグを許可しますか？**」が出たら「このPCを常に許可」にチェックして「OK」。
 10. **adb認識確認**（PowerShell）:
     ```powershell
@@ -40,7 +40,7 @@ adbに出てこない場合、SDK同梱ドライバを当てる:
 ## D. アプリのインストールと実行
 **方法1: Android Studio（推奨・証明書も通りやすい）**
 1. Android Studio で `c:\Source\Repos\robohon-intelligence\robohon-app` を開く（Open an existing project）。
-2. Gradle同期が完了したら、接続中の **SHARP SR-S05BJ** を選び **Run 'app'**。
+2. Gradle同期が完了したら、接続中の **SHARP SR06M** を選び **Run 'app'**。
 
 **方法2: CLIでビルド済みAPKを直接インストール**
 ```powershell
@@ -62,7 +62,7 @@ $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
 - **発話しない** → マナーモードOFF、音量、Instant Run無効（旧AS）、アプリ再インストール。
 - **起動ワードが効かない** → シナリオ未登録の可能性。アプリを一度起動（Android Studioから直接Activity起動）してから再度音声起動、または再インストール。
 - **adb unauthorized** → 本体の許可ダイアログ承認、`adb kill-server; adb start-server`。
-- **モーション** → SR-S05BJは13サーボの歩行モデルなので歩行系 `behavior` も利用可（マナーモード/充電中/USB接続中など実行不可条件はガイドライン参照）。
+- **モーション** → SR06Mは13サーボの歩行モデルなので歩行系 `behavior` も利用可（マナーモード/充電中/USB接続中など実行不可条件はガイドライン参照）。
 
 ## 起動ワード（現行）
 起動ワードは**その端末に設定されているロボホンの名前**（かな）で決まる。固定文言ではない。
@@ -78,7 +78,7 @@ $adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"
   誤認識が続く場合は本体でロボホンの名前を認識しやすい別名（あいぼう/くろーど 等）に変更すると安定する。
 
 ## ゲート結果（2026-06-28 達成）
-- [x] adb で実機認識（SR06M / Android8.1 / serial 355986300612273）
+- [x] adb で実機認識（SR06M / Android8.1 / serial 355986300612273 ※当時の個体SR-S05BJ。現用機は serial 355986300504496）
 - [x] `robohon-app` ビルド成功（APK生成）
 - [x] 実機へインストール成功
 - [x] 起動ワード（ロボコン）でアプリ起動＆発話（ログ: startTTSBuffer / onStartSpeech）

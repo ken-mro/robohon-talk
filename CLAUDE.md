@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## プロジェクト概要
 
-RoBoHoN（シャープの人型ロボット電話・実機 SR-S05BJ）の会話を Claude LLM に担わせるプロジェクト。3コンポーネント構成:
+RoBoHoN（シャープの人型ロボット電話・実機 SR06M）の会話を Claude LLM に担わせるプロジェクト。3コンポーネント構成:
 
 - **robohon-app/** — Android アプリ（Java, minSdk/targetSdk 21, compileSdk 34, AGP 8.5.2/Gradle 8.14/JDK17）。起動ワードで立ち上がり、音声認識テキストを中継サーバへ POST し、応答を発話する。
 - **relay-server/** — Node/TS 中継サーバ（pnpm）。`/chat` で Claude Haiku 4.5 を呼び、応答を ~150 字に分割した `utterances[]` と tool use 由来の `action` を返す。`/digest` はナレッジベース更新（Sonnet 5）。本番は Cloudflare Workers にデプロイ済み。

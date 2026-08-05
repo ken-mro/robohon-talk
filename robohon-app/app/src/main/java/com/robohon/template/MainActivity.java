@@ -1226,7 +1226,7 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
             "(ないで|しないで|なくてい|しなくてい|そのままで|変えないで|かえないで)");
 
     /**
-     * ロボホンの音声(TTS)が鳴るストリーム。実機(SR-S05BJ/Android8.1)で再生中トラックの
+     * ロボホンの音声(TTS)が鳴るストリーム。実機(SR06M/Android8.1)で再生中トラックの
      * stream type を確認した結果 STREAM_TTS(=9) だった（STREAM_MUSIC ではない）。
      * AOSP/SHARPの隠しストリームのため定数が公開SDKに無く、整数値で指定する。
      */

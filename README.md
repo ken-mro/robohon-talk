@@ -11,7 +11,7 @@ robohon-intelligence/
 ├── vendor/RoBoHoN_SDK_2_0_0/     公式SDK展開物（gitignore・再配布禁止）
 ├── robohon-app/                  自作Androidアプリ（現状: Templateを近代化した音声UI雛形）
 ├── docs/                         手順・設計メモ
-│   └── workstream2-device-run.md 実機(SR-S05BJ)での実行手順
+│   └── workstream2-device-run.md 実機(SR06M)での実行手順
 └── README.md
 ```
 
@@ -27,12 +27,12 @@ pwsh -File scripts/setup.ps1
 
 ## 進捗
 - **Workstream 1（SDKナレッジベース＋Skill）**: 完了。`robohon-sdk` スキルでHVML/API/制約を参照可能。
-- **Workstream 2（環境構築・サンプル実機動作）**: PC側ビルド確立済み。`robohon-app` がCLIでビルド成功（APK生成）。実機(SR-S05BJ)での起動・発話確認が残ゲート → [docs/workstream2-device-run.md](docs/workstream2-device-run.md)。
+- **Workstream 2（環境構築・サンプル実機動作）**: PC側ビルド確立済み。`robohon-app` がCLIでビルド成功（APK生成）。実機(SR06M)での起動・発話確認が残ゲート → [docs/workstream2-device-run.md](docs/workstream2-device-run.md)。
 
 ## robohon-app のビルド
 
 ### 対象機
-SR-S05BJ（第2世代「ロボホンlite」／Android 8.1 / API27 / Wi-Fi専用）。SDK対象機種。
+SR06M（Android 8.1 / API27・13サーボ二足歩行モデル・3G/LTE/Wi-Fi対応でSIM無しWi-Fi運用）。SDK動作確認済み。
 
 ### ツールチェーン（このPCで確認済み）
 - Android Studio（同梱JBR = JDK17）, Android SDK（platform android-34, build-tools 34, platform-tools/adb）
