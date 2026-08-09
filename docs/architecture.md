@@ -5,7 +5,7 @@ Workstream 2 のGate通過後の設計確定。実装方針：**Node.js (TypeScr
 ## 全体データフロー
 ```
 [RoBoHoN実機 / robohon-app (Android)]
-  起動ワード「ロボコンを起動して/オッケーロボコン」(home.hvml)
+  起動ワード「領域展開／領域展開して」(home.hvml)
    → MainActivity起動 → 待受(listen) でユーザ発話
    → ${Lvcsr:Basic} 認識テキスト取得 (頭ボタンで待受が安定)
    → HTTP POST /chat {sessionId, text} を中継サーバへ(同一Wi-Fi)
@@ -96,7 +96,7 @@ Workstream 2 のGate通過後の設計確定。実装方針：**Node.js (TypeScr
 ## 制約の再確認（設計に織り込み済）
 - 発話文字数の公式上限は無いが**~150字分割**を採用（自然さ・先行事例）。自動モーション`assign`は読み<30字。
 - クラウド音声認識は**月間上限**あり → PoCは多用を避け、必要なら独自ASR検討（Phase B/C課題）。
-- 起動ワードは「ロボコン」（`docs/workstream2-device-run.md`）。「ロボホン」と紛れる場合は変更。
+- 起動ワードは固定文言「領域展開」（`docs/workstream2-device-run.md`）。ロボホン名起動は標準応答と競合するため廃止。
 - SR06M=歩行モデル（13サーボ）。モーション/歩行演出を発話に絡め可。
 
 ## 検証（Phase B PoCのGate）

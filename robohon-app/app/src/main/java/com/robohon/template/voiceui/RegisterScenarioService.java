@@ -9,14 +9,10 @@ import android.os.RemoteException;
 import android.util.Log;
 
 import java.io.File;
-import java.io.FileInputStream;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.nio.charset.StandardCharsets;
 
-import jp.co.sharp.android.rb.addressbook.AddressBookManager;
-import jp.co.sharp.android.rb.addressbook.AddressBookVariable.RoboProfileData;
 import jp.co.sharp.android.voiceui.VoiceUIManager;
 
 /**
@@ -176,15 +172,6 @@ public class RegisterScenarioService extends Service {
         //ローカルフォルダーのファイル名リストを取得.
         File[] files = localFolder.listFiles();
 
-        //home用シナリオは起動ワードのプレースホルダ __ROBO_KANA__ をロボホン実名(かな)へ置換.
-        if (home && files != null) {
-            String robotKana = getRobotKana();
-            for (File file : files) {
-                replaceInFile(file, "__ROBO_KANA__", robotKana);
-            }
-            Log.d(TAG, "home launch word kana = " + robotKana);
-        }
-
         //ローカルフォルダーのhvmlファイルのシナリオを登録する.
         for (File file : files) {
             Log.d(TAG, "registerScenario file=" + file.getAbsolutePath());
@@ -338,46 +325,6 @@ public class RegisterScenarioService extends Service {
             assetsFile = null;
             localFile = null;
             assetsFile = null;
-        }
-    }
-
-    /**
-     * ロボホンの名前(かな)を取得。取得不可なら "ろぼほん"。起動ワードに使う。
-     */
-    private String getRobotKana() {
-        try {
-            AddressBookManager m = AddressBookManager.getService(getApplicationContext());
-            if (m != null) {
-                RoboProfileData robo = m.getRoboProfileData();
-                if (robo != null && robo.getRbname() != null && !robo.getRbname().isEmpty()) {
-                    return robo.getRbname();
-                }
-            }
-        } catch (Throwable t) {
-            Log.w(TAG, "getRobotKana failed: " + t);
-        }
-        return "ろぼほん";
-    }
-
-    /**
-     * ファイル内の token を value に置換して書き戻す（UTF-8）。token が無ければ何もしない。
-     */
-    private static void replaceInFile(File file, String token, String value) {
-        try {
-            if (file == null || !file.isFile()) return;
-            byte[] buf = new byte[(int) file.length()];
-            try (FileInputStream in = new FileInputStream(file)) {
-                int off = 0, n;
-                while (off < buf.length && (n = in.read(buf, off, buf.length - off)) > 0) off += n;
-            }
-            String content = new String(buf, StandardCharsets.UTF_8);
-            if (!content.contains(token)) return;
-            content = content.replace(token, value);
-            try (FileOutputStream out = new FileOutputStream(file)) {
-                out.write(content.getBytes(StandardCharsets.UTF_8));
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "replaceInFile failed: " + e.getMessage());
         }
     }
 

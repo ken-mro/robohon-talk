@@ -4,16 +4,16 @@
         <producer>com.robohon.template</producer>
         <description>ホーム起動シナリオ</description>
         <scene value="home"/>
-        <version value="1.0"/>
-        <!-- __ROBO_KANA__ は RegisterScenarioService がロボホンの実名(かな)に置換する。
-             例: 名前が「たろう」→「たろう」(名前単体)／「ねえねえたろう」。既定は「ろぼほん」。-->
-        <situation priority="78" topic_id="start" trigger="user-word">${Local:WORD_APPLICATION} eq __ROBO_KANA__</situation>
-        <situation priority="78" topic_id="start" trigger="user-word">${Local:WORD_APPLICATION_FREEWORD} eq ねえねえ__ROBO_KANA__</situation>
+        <version value="1.1"/>
+        <!-- 起動ワードは固定文言「領域展開」。旧方式（ロボホン名の __ROBO_KANA__ 置換）は
+             本体標準の呼びかけ応答と競合して起動しづらいため廃止した。 -->
+        <situation priority="78" topic_id="start" trigger="user-word">${Local:WORD_APPLICATION} eq りょういきてんかい</situation>
+        <situation priority="78" topic_id="start" trigger="user-word">${Local:WORD_APPLICATION_FREEWORD} eq りょういきてんかいして</situation>
     </head>
     <body>
         <topic id="start" listen="false">
-            <!-- 「オッケー/了解」等の返事は言わせず、うなずきモーションのみ。
-                 あいさつはアプリ起動後の greet（名前入り「{名前}だよー、なになにー？」）に集約する。 -->
+            <!-- ここでは返事を言わせず、うなずきモーションのみ。
+                 口上はアプリ起動後の greet（「いくよ……領域展開！――無限対話空間！」）に集約する。 -->
             <action index="1">
                 <behavior id="${resolver:motion_ok(${resolver:ok_id})}" type="normal"/>
             </action>

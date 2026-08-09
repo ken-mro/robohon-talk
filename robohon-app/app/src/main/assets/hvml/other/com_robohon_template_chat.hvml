@@ -4,18 +4,19 @@
         <producer>com.robohon.template</producer>
         <description>LLM会話シナリオ（あいさつ→待受→認識テキストをアプリへ→応答発話）</description>
         <scene value="com.robohon.template.scene_common"/>
-        <version value="1.0"/>
+        <version value="1.2"/>
         <!-- アプリからstartSpeechで起動するaccost群 -->
         <accost priority="75" topic_id="greet"  word="com.robohon.template.chat.greet"/>
         <accost priority="75" topic_id="say"    word="com.robohon.template.chat.say"/>
         <accost priority="75" topic_id="listen" word="com.robohon.template.chat.listen"/>
     </head>
     <body>
-        <!-- 起動時あいさつ → そのまま待受へ。名前は名乗らず短く応答する。 -->
+        <!-- 起動時の口上（領域展開）→ そのまま待受へ。
+             060023=両手を広げるモーション。wait で溜めを作る。 -->
         <topic id="greet" listen="false">
             <action index="1">
-                <speech>はーい！なにー？</speech>
-                <behavior id="assign" type="normal"/>
+                <speech>いくよ……<wait ms="300"/>領域展開！</speech>
+                <behavior id="060023" type="normal"/>
             </action>
             <next href="#listen" type="default"/>
         </topic>

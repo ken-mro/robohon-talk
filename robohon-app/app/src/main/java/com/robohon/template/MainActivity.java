@@ -401,9 +401,9 @@ public class MainActivity extends Activity implements VoiceUIListenerImpl.Scenar
         // 開発用: 歌だけを直接実行する経路（あいさつも待受もしない）。間合い調整のために使う。
         if (BuildConfig.DEBUG && maybeStartDebugBirthday()) return;
 
-        // 起動あいさつは HVML greet（"はーい！なにー？"）で発話する。名前は名乗らない。
+        // 起動あいさつは HVML greet（領域展開の口上）で発話する。名前は名乗らない。
         // 画面表示用のテキストは発話とは別経路（履歴ファイルには保存しない）。
-        addMessageView(ConversationStore.ROLE_ROBOT, "はーい！なにー？", System.currentTimeMillis());
+        addMessageView(ConversationStore.ROLE_ROBOT, "いくよ……領域展開！", System.currentTimeMillis());
         VoiceUIManagerUtil.startSpeech(mVUIManager, ScenarioDefinitions.ACC_GREET);
     }
 
